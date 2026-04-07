@@ -46,8 +46,9 @@ class ColorWash:
         self._beat_glow: float = 0.0
 
     def render(self, frame: AudioFrame) -> list[tuple[int, int, int]]:
-        # Hue from dominant frequency (smoothed, but responsive)
-        raw_hue = freq_to_hue(frame.dominant_freq)
+        # Hue from dominant frequency, mapped over typical music range
+        # (80-4000Hz covers most dominant frequencies in practice)
+        raw_hue = freq_to_hue(frame.dominant_freq, min_freq=80.0, max_freq=4000.0)
         hue = self._hue_filter.update(raw_hue)
 
         # Brightness: square the RMS to widen the dynamic range
