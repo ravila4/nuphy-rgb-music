@@ -177,7 +177,7 @@ class AudioCapture:
 
         # Running-peak AGC normalization
         max_energy = max(raw_bass, raw_mids, raw_highs)
-        self._peak_energy = max(max_energy, self._peak_energy * 0.95)
+        self._peak_energy = max(max_energy, self._peak_energy * 0.995)
         scale = 1.0 / (self._peak_energy + 1e-10)
 
         bass = self._bass_filter.update(raw_bass * scale)
@@ -186,7 +186,7 @@ class AudioCapture:
 
         dominant_freq = compute_dominant_freq(magnitudes, self._freqs)
         raw_rms = float(np.sqrt(np.mean(chunk**2)))
-        self._peak_rms = max(raw_rms, self._peak_rms * 0.95)
+        self._peak_rms = max(raw_rms, self._peak_rms * 0.995)
         rms = self._rms_filter.update(raw_rms / (self._peak_rms + 1e-10))
         is_beat = self._beat_detector.update(raw_bass)
 

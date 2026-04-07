@@ -72,7 +72,7 @@ def list_audio_devices() -> None:
             print(f"  {i}: {d['name']} ({d['max_input_channels']}ch){marker}")
 
 
-def run(audio_device: int | None = None, fps: int = 30) -> None:
+def run(audio_device: int | None = None, fps: int = 30, debug: bool = False) -> None:
     # Find audio device
     if audio_device is None:
         audio_device = find_blackhole_device()
@@ -107,16 +107,22 @@ def run(audio_device: int | None = None, fps: int = 30) -> None:
         audio = AudioCapture(device_index=audio_device)
 
         # Enter raw mode for keypress detection
-        _enter_raw_mode()
+        if not debug:
+            _enter_raw_mode()
 
         frame_period = 1.0 / fps
-        print(f"\r\nRunning: {visualizers[viz_index].name} @ {fps}fps")
-        print(f"\r\n  'n' = next effect | 'q' = quit\r\n")
+        nl = "\r\n" if not debug else "\n"
+        print(f"{nl}Running: {visualizers[viz_index].name} @ {fps}fps")
+        if debug:
+            print("  Debug mode: Ctrl+C to quit")
+        else:
+            print(f"{nl}  'n' = next effect | 'q' = quit{nl}")
 
         with streaming_mode(device):
             audio.start()
             try:
                 last_colors = [(0, 0, 0)] * led_count
+                frame_count = 0
                 while True:
                     t0 = time.monotonic()
 
@@ -128,19 +134,27 @@ def run(audio_device: int | None = None, fps: int = 30) -> None:
                     # Send to keyboard
                     send_frame(device, last_colors)
 
-                    # Check for keypress
-                    key = poll_keypress()
-                    if key == "q" or key == "\x03":  # q or Ctrl+C
-                        break
-                    elif key == "n":
-                        viz_index = (viz_index + 1) % len(visualizers)
-                        print(f"\r  Effect: {visualizers[viz_index].name}    \r")
+                    if debug and frame_count % 30 == 0 and frame is not None:
+                        print(f"  RGB={last_colors[0]} rms={frame.rms:.3f} bass={frame.bass:.3f} freq={frame.dominant_freq:.0f}Hz beat={frame.is_beat}")
+
+                    # Check for keypress (skip in debug mode)
+                    if not debug:
+                        key = poll_keypress()
+                        if key == "q" or key == "\x03":  # q or Ctrl+C
+                            break
+                        elif key == "n":
+                            viz_index = (viz_index + 1) % len(visualizers)
+                            print(f"\r  Effect: {visualizers[viz_index].name}    \r")
+
+                    frame_count += 1
 
                     # Frame timing
                     elapsed = time.monotonic() - t0
                     remaining = frame_period - elapsed
                     if remaining > 0:
                         time.sleep(remaining)
+            except KeyboardInterrupt:
+                pass
             finally:
                 audio.stop()
     finally:
@@ -165,13 +179,17 @@ def main():
         "--list-devices", action="store_true",
         help="List audio input devices and exit",
     )
+    parser.add_argument(
+        "--debug", action="store_true",
+        help="Debug mode: no raw terminal, prints frame data, Ctrl+C to quit",
+    )
     args = parser.parse_args()
 
     if args.list_devices:
         list_audio_devices()
         return
 
-    run(audio_device=args.audio_device, fps=args.fps)
+    run(audio_device=args.audio_device, fps=args.fps, debug=args.debug)
 
 
 if __name__ == "__main__":
