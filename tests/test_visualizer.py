@@ -1,7 +1,8 @@
 import pytest
 
 from nuphy_rgb.audio import AudioFrame
-from nuphy_rgb.visualizer import ColorWash, freq_to_hue
+from nuphy_rgb.effects.color_wash import ColorWash
+from nuphy_rgb.visualizer import freq_to_hue
 
 NUM_LEDS = 84
 

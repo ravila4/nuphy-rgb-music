@@ -14,9 +14,10 @@ import hid
 import sounddevice as sd
 
 from nuphy_rgb.audio import AudioCapture
+from nuphy_rgb.effects import ALL_EFFECTS
 from nuphy_rgb.hid_utils import find_raw_hid_path, send_frame, streaming_mode
 from nuphy_rgb.probe import probe
-from nuphy_rgb.visualizer import ColorWash, Visualizer
+from nuphy_rgb.visualizer import Visualizer
 
 # Terminal state for raw mode keypress polling
 _original_termios = None
@@ -100,7 +101,7 @@ def run(audio_device: int | None = None, fps: int = 30, debug: bool = False) -> 
             sys.exit(1)
 
         # Set up visualizers
-        visualizers: list[Visualizer] = [ColorWash(num_leds=led_count)]
+        visualizers: list[Visualizer] = [cls(num_leds=led_count) for cls in ALL_EFFECTS]
         viz_index = 0
 
         # Set up audio capture
