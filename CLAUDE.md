@@ -37,11 +37,27 @@ Two workstreams:
 - Update rate constraint: ~4 LEDs per scan cycle at 26ms intervals (perf fix in ryodeushii fork)
 - DFU mode: hold Esc while plugging in USB (always recoverable)
 
+## Local Repos
+
+| Repo | Path | Branch | Purpose |
+|------|------|--------|---------|
+| This project | `~/Projects/nuphy-rgb-music` | `main` | Host code, research, docs |
+| QMK firmware fork | `~/Projects/qmk-firmware` | `nuphy-keyboards` | Firmware we build & flash |
+
+## Recovery
+
+Fallback firmware binaries in `firmware/fallback/`:
+- `current_dump.bin` -- dumped from keyboard 2026-04-07
+- `nuphy_stock_v2.0.3.bin` -- NuPhy official
+- `ryodeushii_via_ryo-1.1.4.bin` -- community QMK+VIA
+
+Flash via DFU: hold Esc + plug in USB, then `dfu-util -a 0 -d 0x19F5:0x3246 -s 0x08000000:leave -D <file.bin>`
+
 ## Dependencies
 
 ```bash
 # Firmware build
-brew install qmk/qmk/qmk && qmk setup
+brew install qmk/qmk/qmk dfu-util && qmk setup
 
 # Host
 brew install hidapi blackhole-2ch
