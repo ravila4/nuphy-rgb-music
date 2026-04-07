@@ -1,9 +1,0 @@
-pyproject.toml
-src/nuphy_rgb/__init__.py
-src/nuphy_rgb/hid_utils.py
-src/nuphy_rgb.egg-info/PKG-INFO
-src/nuphy_rgb.egg-info/SOURCES.txt
-src/nuphy_rgb.egg-info/dependency_links.txt
-src/nuphy_rgb.egg-info/requires.txt
-src/nuphy_rgb.egg-info/top_level.txt
-tests/test_hid_utils.py
