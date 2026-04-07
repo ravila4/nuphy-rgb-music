@@ -70,7 +70,7 @@ class Mycelium:
 
     def _stamp(self, row: int, col: int, hue: float, energy: float) -> None:
         """Blend HSV color into the glow grid at (row, col) using max blend."""
-        r_f, g_f, b_f = colorsys.hsv_to_rgb(hue, 1.0, energy)
+        r_f, g_f, b_f = colorsys.hsv_to_rgb(hue, 0.95, min(energy * 1.5, 1.0))
         self._glow[row, col, 0] = max(self._glow[row, col, 0], r_f)
         self._glow[row, col, 1] = max(self._glow[row, col, 1], g_f)
         self._glow[row, col, 2] = max(self._glow[row, col, 2], b_f)
@@ -105,11 +105,11 @@ class Mycelium:
         # 1. Smooth RMS
         rms = self._rms_filter.update(frame.rms)
 
-        # 2. Decay glow
-        self._glow *= 0.88
+        # 2. Decay glow (slower decay = longer-lasting trails)
+        self._glow *= 0.93
 
         # 3. Phosphorescent base: keep a minimum green floor
-        self._glow[:, :, 1] = np.maximum(self._glow[:, :, 1], 0.015)
+        self._glow[:, :, 1] = np.maximum(self._glow[:, :, 1], 0.02)
 
         # 4. On beat: spawn new tendrils
         if frame.is_beat and len(self._tendrils) < self._max_tendrils:

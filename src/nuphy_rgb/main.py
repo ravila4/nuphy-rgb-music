@@ -1,17 +1,13 @@
 """Main loop: audio capture -> visualization -> HID output."""
 
 import argparse
-import atexit
-import os
-import select
-import signal
 import sys
-import termios
+import threading
 import time
-import tty
 
 import hid
 import sounddevice as sd
+from pynput import keyboard
 
 from nuphy_rgb.audio import AudioCapture
 from nuphy_rgb.effects import ALL_EFFECTS
@@ -19,41 +15,50 @@ from nuphy_rgb.hid_utils import find_raw_hid_path, send_frame, streaming_mode
 from nuphy_rgb.probe import probe
 from nuphy_rgb.visualizer import Visualizer
 
-# Terminal state for raw mode keypress polling
-_original_termios = None
+
+class _HotkeyState:
+    """Thread-safe state controlled by global hotkeys."""
+
+    def __init__(self, num_effects: int):
+        self._lock = threading.Lock()
+        self._num_effects = num_effects
+        self.viz_index = 0
+        self.quit = False
+        self.changed = False  # flag: effect was just switched
+
+    def next_effect(self) -> None:
+        with self._lock:
+            self.viz_index = (self.viz_index + 1) % self._num_effects
+            self.changed = True
+
+    def prev_effect(self) -> None:
+        with self._lock:
+            self.viz_index = (self.viz_index - 1) % self._num_effects
+            self.changed = True
+
+    def request_quit(self) -> None:
+        with self._lock:
+            self.quit = True
+
+    def poll_changed(self) -> int | None:
+        """Return new index if changed, else None. Resets the flag."""
+        with self._lock:
+            if self.changed:
+                self.changed = False
+                return self.viz_index
+            return None
 
 
-def _save_terminal() -> None:
-    global _original_termios
-    try:
-        _original_termios = termios.tcgetattr(sys.stdin)
-    except termios.error:
-        _original_termios = None
-
-
-def _restore_terminal() -> None:
-    if _original_termios is not None:
-        try:
-            termios.tcsetattr(sys.stdin, termios.TCSADRAIN, _original_termios)
-        except termios.error:
-            pass
-
-
-def _enter_raw_mode() -> None:
-    _save_terminal()
-    atexit.register(_restore_terminal)
-    # In raw mode, Ctrl+C sends '\x03' instead of SIGINT.
-    # We handle it in the main loop via poll_keypress().
-    # SIGTERM still needs a handler to ensure cleanup.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-    tty.setraw(sys.stdin.fileno())
-
-
-def poll_keypress() -> str | None:
-    """Non-blocking read of a single character from stdin (raw mode)."""
-    if select.select([sys.stdin], [], [], 0)[0]:
-        return sys.stdin.read(1)
-    return None
+def _start_hotkey_listener(state: _HotkeyState) -> keyboard.GlobalHotKeys:
+    """Start a pynput global hotkey listener (runs in a daemon thread)."""
+    hotkeys = keyboard.GlobalHotKeys({
+        "<ctrl>+<shift>+<right>": state.next_effect,
+        "<ctrl>+<shift>+<left>": state.prev_effect,
+        "<ctrl>+<shift>+q": state.request_quit,
+    })
+    hotkeys.daemon = True
+    hotkeys.start()
+    return hotkeys
 
 
 def find_blackhole_device() -> int | None:
@@ -101,51 +106,44 @@ def run(audio_device: int | None = None, fps: int = 30, debug: bool = False) -> 
             sys.exit(1)
 
         # Set up visualizers
-        visualizers: list[Visualizer] = [cls(num_leds=led_count) for cls in ALL_EFFECTS]
-        viz_index = 0
+        visualizers: list[Visualizer] = [cls() for cls in ALL_EFFECTS]
+
+        # Set up hotkey listener
+        state = _HotkeyState(len(visualizers))
+        listener = _start_hotkey_listener(state)
 
         # Set up audio capture
         audio = AudioCapture(device_index=audio_device)
 
-        # Enter raw mode for keypress detection
-        if not debug:
-            _enter_raw_mode()
-
         frame_period = 1.0 / fps
-        nl = "\r\n" if not debug else "\n"
-        print(f"{nl}Running: {visualizers[viz_index].name} @ {fps}fps")
+        print(f"\nRunning: {visualizers[state.viz_index].name} @ {fps}fps")
+        print(f"  Ctrl+Shift+Right/Left = cycle effects | Ctrl+Shift+Q = quit")
         if debug:
-            print("  Debug mode: Ctrl+C to quit")
-        else:
-            print(f"{nl}  'n' = next effect | 'q' = quit{nl}")
+            print("  Debug mode: Ctrl+C also quits\n")
 
         with streaming_mode(device):
             audio.start()
             try:
                 last_colors = [(0, 0, 0)] * led_count
                 frame_count = 0
-                while True:
+                while not state.quit:
                     t0 = time.monotonic()
+
+                    # Check for effect switch
+                    new_idx = state.poll_changed()
+                    if new_idx is not None:
+                        print(f"  Effect: {visualizers[new_idx].name}")
 
                     # Process audio
                     frame = audio.process_latest()
                     if frame is not None:
-                        last_colors = visualizers[viz_index].render(frame)
+                        last_colors = visualizers[state.viz_index].render(frame)
 
                     # Send to keyboard
                     send_frame(device, last_colors)
 
                     if debug and frame_count % 30 == 0 and frame is not None:
                         print(f"  RGB={last_colors[0]} rms={frame.rms:.3f} bass={frame.bass:.3f} freq={frame.dominant_freq:.0f}Hz beat={frame.is_beat}")
-
-                    # Check for keypress (skip in debug mode)
-                    if not debug:
-                        key = poll_keypress()
-                        if key == "q" or key == "\x03":  # q or Ctrl+C
-                            break
-                        elif key == "n":
-                            viz_index = (viz_index + 1) % len(visualizers)
-                            print(f"\r  Effect: {visualizers[viz_index].name}    \r")
 
                     frame_count += 1
 
@@ -158,10 +156,10 @@ def run(audio_device: int | None = None, fps: int = 30, debug: bool = False) -> 
                 pass
             finally:
                 audio.stop()
+                listener.stop()
     finally:
         device.close()
-        _restore_terminal()
-        print("\r\nDone.")
+        print("\nDone.")
 
 
 def main():
@@ -182,7 +180,7 @@ def main():
     )
     parser.add_argument(
         "--debug", action="store_true",
-        help="Debug mode: no raw terminal, prints frame data, Ctrl+C to quit",
+        help="Debug mode: prints frame data, Ctrl+C to quit",
     )
     args = parser.parse_args()
 

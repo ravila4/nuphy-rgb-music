@@ -6,6 +6,7 @@ dependencies = [
     "hidapi>=0.14",
     "sounddevice>=0.4",
     "numpy>=1.26",
+    "pynput>=1.8.1",
 ]
 
 [project.optional-dependencies]
