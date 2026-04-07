@@ -4,10 +4,15 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "hidapi>=0.14",
+    "sounddevice>=0.4",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+
+[project.scripts]
+nuphy-rgb = "nuphy_rgb.main:main"
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -7,12 +7,10 @@ import hid
 
 from nuphy_rgb.hid_utils import (
     CMD_GET_TOTAL_LEDS,
-    CMD_STREAM_RGB_DATA,
-    CMD_STREAMING_MODE_OFF,
-    CMD_STREAMING_MODE_ON,
-    LEDS_PER_PACKET,
     build_packet,
     find_raw_hid_path,
+    send_frame,
+    streaming_mode,
 )
 
 
@@ -36,42 +34,22 @@ def probe(device: hid.device) -> int | None:
 
 def test_single_led(device: hid.device, led_index: int = 0):
     """Enable streaming, set one LED to red, wait, then restore."""
-    print("Enabling streaming mode...")
-    device.write(build_packet(CMD_STREAMING_MODE_ON))
-    resp = device.read(32, timeout_ms=1000)
-    if not resp or resp[0] != CMD_STREAMING_MODE_ON:
-        print(f"Failed to enable streaming mode. Response: {bytes(resp[:4]).hex() if resp else 'timeout'}")
-        return
-
-    print(f"Setting LED {led_index} to red...")
-    device.write(build_packet(CMD_STREAM_RGB_DATA, led_index, 1, 255, 0, 0))
-
-    input("LED should be red. Press Enter to restore normal RGB...")
-
-    device.write(build_packet(CMD_STREAMING_MODE_OFF))
-    device.read(32, timeout_ms=1000)
+    with streaming_mode(device):
+        print(f"Setting LED {led_index} to red...")
+        colors = [(0, 0, 0)] * 84
+        colors[led_index] = (255, 0, 0)
+        send_frame(device, colors)
+        input("LED should be red. Press Enter to restore normal RGB...")
     print("Streaming disabled. Normal RGB restored.")
 
 
 def test_all_red(device: hid.device, total_leds: int):
     """Set all LEDs to red, wait, then restore."""
-    print("Enabling streaming mode...")
-    device.write(build_packet(CMD_STREAMING_MODE_ON))
-    resp = device.read(32, timeout_ms=1000)
-    if not resp or resp[0] != CMD_STREAMING_MODE_ON:
-        print(f"Failed to enable streaming mode. Response: {bytes(resp[:4]).hex() if resp else 'timeout'}")
-        return
-
-    print(f"Setting all {total_leds} LEDs to red...")
-    for start in range(0, total_leds, LEDS_PER_PACKET):
-        count = min(LEDS_PER_PACKET, total_leds - start)
-        rgb_data = [255, 0, 0] * count
-        device.write(build_packet(CMD_STREAM_RGB_DATA, start, count, *rgb_data))
-
-    input("All LEDs should be red. Press Enter to restore normal RGB...")
-
-    device.write(build_packet(CMD_STREAMING_MODE_OFF))
-    device.read(32, timeout_ms=1000)
+    with streaming_mode(device):
+        print(f"Setting all {total_leds} LEDs to red...")
+        colors = [(255, 0, 0)] * total_leds
+        send_frame(device, colors)
+        input("All LEDs should be red. Press Enter to restore normal RGB...")
     print("Streaming disabled. Normal RGB restored.")
 
 

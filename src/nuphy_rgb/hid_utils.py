@@ -1,3 +1,5 @@
+from contextlib import contextmanager
+
 import hid
 
 NUPHY_VID = 0x19F5
@@ -35,3 +37,30 @@ def build_packet(command_id: int, *args: int) -> bytes:
             f"Packet payload {len(payload)} bytes exceeds max {PACKET_SIZE}"
         )
     return b"\x00" + payload.ljust(PACKET_SIZE, b"\x00")
+
+
+def send_frame(device: hid.device, colors: list[tuple[int, int, int]]) -> None:
+    """Send per-key RGB colors to the keyboard. Fire-and-forget (no ACK)."""
+    for start in range(0, len(colors), LEDS_PER_PACKET):
+        chunk = colors[start : start + LEDS_PER_PACKET]
+        rgb_bytes = []
+        for r, g, b in chunk:
+            rgb_bytes.extend((r, g, b))
+        device.write(build_packet(CMD_STREAM_RGB_DATA, start, len(chunk), *rgb_bytes))
+
+
+@contextmanager
+def streaming_mode(device: hid.device):
+    """Context manager that enables/disables RGB streaming mode.
+
+    Ensures streaming is disabled on exit, even on exceptions.
+    """
+    device.write(build_packet(CMD_STREAMING_MODE_ON))
+    resp = device.read(32, timeout_ms=1000)
+    if not resp or resp[0] != CMD_STREAMING_MODE_ON:
+        raise ConnectionError("Failed to enable streaming mode")
+    try:
+        yield
+    finally:
+        device.write(build_packet(CMD_STREAMING_MODE_OFF))
+        device.read(32, timeout_ms=1000)
