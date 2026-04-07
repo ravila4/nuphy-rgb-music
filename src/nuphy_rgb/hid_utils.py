@@ -63,4 +63,12 @@ def streaming_mode(device: hid.device):
         yield
     finally:
         device.write(build_packet(CMD_STREAMING_MODE_OFF))
-        device.read(32, timeout_ms=1000)
+        resp = device.read(32, timeout_ms=1000)
+        if not resp or resp[0] != CMD_STREAMING_MODE_OFF:
+            import sys
+
+            print(
+                "Warning: failed to confirm streaming mode disabled. "
+                "Keyboard may need USB replug.",
+                file=sys.stderr,
+            )

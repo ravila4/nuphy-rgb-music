@@ -27,6 +27,24 @@ class AudioFrame:
     timestamp: float
 
 
+class ExpFilter:
+    """Asymmetric exponential smoothing filter.
+
+    Fast attack (alpha_rise) for responsive transients,
+    slow decay (alpha_decay) for smooth falloff.
+    """
+
+    def __init__(self, alpha_rise: float = 0.8, alpha_decay: float = 0.15):
+        self.alpha_rise = alpha_rise
+        self.alpha_decay = alpha_decay
+        self.value: float = 0.0
+
+    def update(self, new_value: float) -> float:
+        alpha = self.alpha_rise if new_value > self.value else self.alpha_decay
+        self.value = alpha * new_value + (1 - alpha) * self.value
+        return self.value
+
+
 def compute_band_energies(
     magnitudes: np.ndarray, freqs: np.ndarray
 ) -> tuple[float, float, float]:
@@ -47,9 +65,9 @@ def compute_band_energies(
 def compute_dominant_freq(magnitudes: np.ndarray, freqs: np.ndarray) -> float:
     """Return the frequency (Hz) with the highest magnitude.
 
-    Returns 0.0 for silence (all-zero magnitudes).
+    Returns 0.0 for near-silence (avoids noise-floor flicker).
     """
-    if np.max(magnitudes) == 0:
+    if np.max(magnitudes) < 1e-6:
         return 0.0
     return float(freqs[np.argmax(magnitudes)])
 
@@ -70,9 +88,6 @@ class BeatDetector:
 
     def update(self, bass_energy: float) -> bool:
         """Feed bass energy for this frame. Returns True on beat onset."""
-        if self._cooldown > 0:
-            self._cooldown -= 1
-
         if len(self._history) < self._history.maxlen:
             self._history.append(bass_energy)
             return False
@@ -88,6 +103,8 @@ class BeatDetector:
 
         if is_beat:
             self._cooldown = self._refractory
+        elif self._cooldown > 0:
+            self._cooldown -= 1
         return is_beat
 
 
@@ -150,7 +167,12 @@ class AudioCapture:
             self._stream = None
 
     def process_latest(self) -> AudioFrame | None:
-        """Drain the queue, roll latest chunk into ring buffer, compute frame."""
+        """Drain the queue and process the latest chunk.
+
+        Only the most recent audio chunk is rolled into the ring buffer.
+        Intermediate chunks are intentionally discarded to minimize latency --
+        we always want the freshest audio, not a complete history.
+        """
         chunk = None
         try:
             while True:
@@ -199,21 +221,3 @@ class AudioCapture:
             is_beat=is_beat,
             timestamp=time.monotonic(),
         )
-
-
-class ExpFilter:
-    """Asymmetric exponential smoothing filter.
-
-    Fast attack (alpha_rise) for responsive transients,
-    slow decay (alpha_decay) for smooth falloff.
-    """
-
-    def __init__(self, alpha_rise: float = 0.8, alpha_decay: float = 0.15):
-        self.alpha_rise = alpha_rise
-        self.alpha_decay = alpha_decay
-        self.value: float = 0.0
-
-    def update(self, new_value: float) -> float:
-        alpha = self.alpha_rise if new_value > self.value else self.alpha_decay
-        self.value = alpha * new_value + (1 - alpha) * self.value
-        return self.value
