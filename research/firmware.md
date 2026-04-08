@@ -25,7 +25,7 @@ Reference tracker: `zhogov/nuphy-state-of-qmk-firmware`
 
 ### Directory Structure (ryodeushii fork)
 
-```
+```text
 keyboards/nuphy/air75v2/ansi/
   ansi.c            -- main keyboard logic, key processing, VIA handlers
   ansi.h            -- custom keycodes, kb_config_t struct
@@ -85,7 +85,7 @@ Source: `zhouzengming/Nuphy-qmk-SignalRGB` -- `quantum/signalrgb.c`
 
 ### RGB Streaming Packet Format (0x24)
 
-```
+```text
 Byte 0: 0x24 (STREAM_RGB_DATA)
 Byte 1: start_led_index
 Byte 2: number_of_leds (max 9 per packet)
@@ -127,7 +127,7 @@ void raw_hid_receive(uint8_t *data, uint8_t length) {
 
 Indices are **not** sequential left-to-right. Odd rows are reversed.
 
-```
+```text
 Row 0 (Esc..Del):     0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15
 Row 1 (`..Bksp):     30 29 28 27 26 25 24 23 22 21 20 19 18 17 16       <- reversed
 Row 2 (Tab..PgUp):   31 32 33 34 35 36 37 38 39 40 41 42 43 44 45
@@ -158,6 +158,7 @@ qmk compile -kb nuphy/air75v2/ansi -km via
 
 1. Enter DFU mode: **hold Esc while plugging in USB**
 2. Flash:
+
    ```bash
    qmk flash -kb nuphy/air75v2/ansi -km via
    # or directly:

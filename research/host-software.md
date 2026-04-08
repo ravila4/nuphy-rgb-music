@@ -137,16 +137,6 @@ class BeatDetector:
         return bass_energy > avg * self.threshold and avg > 0
 ```
 
-## Visualization Ideas
-
-| Effect               | Description                                          |
-|----------------------|------------------------------------------------------|
-| Bass pulse           | All keys flash on beat, intensity = bass energy      |
-| Spectrum bars        | Each column = frequency band, height = energy        |
-| Ripple               | Beat triggers color ripple from center outward       |
-| Color wash           | Hue shifts with dominant frequency, brightness = energy |
-| Rain                 | Random keys light up, rate proportional to energy    |
-
 ## Alternative: No BlackHole (Per-App Capture)
 
 Apple's ScreenCaptureKit can capture audio per-app without a kernel extension,

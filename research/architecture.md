@@ -7,7 +7,7 @@ with real-time music-reactive visualizations via audio capture and FFT analysis.
 
 ## System Architecture
 
-```
+```text
 +-----------------------------------------------------+
 |  macOS Host (Python)                                 |
 |                                                      |
@@ -28,13 +28,13 @@ with real-time music-reactive visualizations via audio capture and FFT analysis.
 +------------------------------------------------|-----+
                                                  |
                    32-byte packets               |
-                   cmd=0x24, 9 LEDs/packet        |
+                   cmd=0x24, 9 LEDs/packet       |
                                                  |
 +------------------------------------------------|-----+
-|  NuPhy Air75 V2 (STM32F072, QMK)              |     |
+|  NuPhy Air75 V2 (STM32F072, QMK)               |     |
 |                                                |     |
 |  +---------------+    +---------------+        |     |
-|  | raw_hid_      |<---| USB HID       |<------+     |
+|  | raw_hid_      |<---| USB HID       |<-------+     |
 |  | receive()     |    | endpoint      |              |
 |  +-------+-------+    +---------------+              |
 |          | parse packet                              |
@@ -52,11 +52,13 @@ with real-time music-reactive visualizations via audio capture and FFT analysis.
 Get basic per-key color control working end-to-end.
 
 **Firmware side (~50 lines C):**
+
 - Fork `ryodeushii/qmk-firmware` (most maintained NuPhy QMK fork)
 - Add `raw_hid_receive()` handler via `via_command_kb()` hook
 - Adapt SignalRGB protocol from `zhouzengming/Nuphy-qmk-SignalRGB`
 
 **Host side (Python):**
+
 - Open Raw HID interface via `pyhidapi`
 - Send per-key color commands
 - Validate with static color test
