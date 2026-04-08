@@ -6,4 +6,5 @@ __pycache__/
 .build/
 .scratch/
 .claude/worktrees/
+research/
 CLAUDE.md
