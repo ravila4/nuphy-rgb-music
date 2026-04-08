@@ -6,14 +6,6 @@ over USB Raw HID.
 
 Tested on **NuPhy Air75 V2**. Support for other Air models incoming.
 
-```mermaid
-graph TD
-    A[System Audio] -->|BlackHole loopback| B[Audio Capture]
-    B --> C[FFT + Beat Detection]
-    C --> D[Visualizer Effect]
-    D -->|USB Raw HID| E[Per-Key RGB on Keyboard]
-```
-
 ## Requirements
 
 - macOS (tested on Apple Silicon)
