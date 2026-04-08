@@ -15,6 +15,10 @@ CMD_STREAM_RGB_DATA = 0x24
 CMD_STREAMING_MODE_ON = 0x25
 CMD_STREAMING_MODE_OFF = 0x26
 CMD_GET_TOTAL_LEDS = 0x27
+CMD_STREAM_SIDE_DATA = 0x28
+CMD_SIDE_STREAMING_ON = 0x29
+CMD_SIDE_STREAMING_OFF = 0x2A
+SIDE_LED_COUNT = 12
 
 LEDS_PER_PACKET = 9  # max RGB triples that fit in 32-byte payload
 
@@ -102,34 +106,62 @@ def build_packet(command_id: int, *args: int) -> bytes:
     return b"\x00" + payload.ljust(PACKET_SIZE, b"\x00")
 
 
-def send_frame(device: hid.device, colors: list[tuple[int, int, int]]) -> None:
-    """Send per-key RGB colors to the keyboard. Fire-and-forget (no ACK)."""
+def _send_led_frame(
+    device: hid.device, command_id: int, colors: list[tuple[int, int, int]]
+) -> None:
+    """Send LED colors to the keyboard. Fire-and-forget (no ACK)."""
     for start in range(0, len(colors), LEDS_PER_PACKET):
         chunk = colors[start : start + LEDS_PER_PACKET]
         rgb_bytes = []
         for r, g, b in chunk:
             rgb_bytes.extend((r, g, b))
-        device.write(build_packet(CMD_STREAM_RGB_DATA, start, len(chunk), *rgb_bytes))
+        device.write(build_packet(command_id, start, len(chunk), *rgb_bytes))
+
+
+def send_frame(device: hid.device, colors: list[tuple[int, int, int]]) -> None:
+    """Send per-key RGB colors to the keyboard."""
+    _send_led_frame(device, CMD_STREAM_RGB_DATA, colors)
+
+
+def send_side_frame(device: hid.device, colors: list[tuple[int, int, int]]) -> None:
+    """Send side LED colors to the keyboard (12 LEDs)."""
+    if len(colors) != SIDE_LED_COUNT:
+        raise ValueError(
+            f"Expected {SIDE_LED_COUNT} side LED colors, got {len(colors)}"
+        )
+    _send_led_frame(device, CMD_STREAM_SIDE_DATA, colors)
 
 
 @contextmanager
-def streaming_mode(device: hid.device):
-    """Context manager that enables/disables RGB streaming mode.
+def _streaming_ctx(device: hid.device, on_cmd: int, off_cmd: int, label: str):
+    """Context manager that enables/disables a streaming mode.
 
     Ensures streaming is disabled on exit, even on exceptions.
     """
-    device.write(build_packet(CMD_STREAMING_MODE_ON))
+    device.write(build_packet(on_cmd))
     resp = device.read(32, timeout_ms=1000)
-    if not resp or resp[0] != CMD_STREAMING_MODE_ON:
-        raise ConnectionError("Failed to enable streaming mode")
+    if not resp or resp[0] != on_cmd:
+        raise ConnectionError(f"Failed to enable {label} streaming mode")
     try:
         yield
     finally:
-        device.write(build_packet(CMD_STREAMING_MODE_OFF))
+        device.write(build_packet(off_cmd))
         resp = device.read(32, timeout_ms=1000)
-        if not resp or resp[0] != CMD_STREAMING_MODE_OFF:
+        if not resp or resp[0] != off_cmd:
             print(
-                "Warning: failed to confirm streaming mode disabled. "
+                f"Warning: failed to confirm {label} streaming mode disabled. "
                 "Keyboard may need USB replug.",
                 file=sys.stderr,
             )
+
+
+def streaming_mode(device: hid.device):
+    """Context manager for per-key RGB streaming mode."""
+    return _streaming_ctx(device, CMD_STREAMING_MODE_ON, CMD_STREAMING_MODE_OFF, "RGB")
+
+
+def side_streaming_mode(device: hid.device):
+    """Context manager for side LED streaming mode."""
+    return _streaming_ctx(
+        device, CMD_SIDE_STREAMING_ON, CMD_SIDE_STREAMING_OFF, "side"
+    )
