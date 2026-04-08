@@ -1,4 +1,6 @@
+import sys
 from contextlib import contextmanager
+from dataclasses import dataclass
 
 import hid
 
@@ -17,13 +19,74 @@ CMD_GET_TOTAL_LEDS = 0x27
 LEDS_PER_PACKET = 9  # max RGB triples that fit in 32-byte payload
 
 
-def find_raw_hid_path(vid: int = NUPHY_VID, pid: int = NUPHY_PID) -> bytes | None:
-    """Find the Raw HID interface path for the NuPhy keyboard."""
+@dataclass(frozen=True)
+class KeyboardInfo:
+    """A discovered NuPhy keyboard."""
+
+    index: int
+    path: bytes
+    serial: str
+
+
+def find_keyboards(
+    vid: int = NUPHY_VID, pid: int = NUPHY_PID
+) -> list[KeyboardInfo]:
+    """Find all connected NuPhy keyboards with Raw HID interfaces."""
     devices = hid.enumerate(vid, pid)
+    keyboards = []
     for d in devices:
         if d["usage_page"] == RAW_HID_USAGE_PAGE and d["usage"] == RAW_HID_USAGE:
-            return d["path"]
-    return None
+            keyboards.append(KeyboardInfo(
+                index=len(keyboards),
+                path=d["path"],
+                serial=d["serial_number"],
+            ))
+    return keyboards
+
+
+def select_keyboards(
+    keyboards: list[KeyboardInfo], device_filter: str | None = None
+) -> list[KeyboardInfo]:
+    """Filter keyboards by index or serial substring.
+
+    None filter → all keyboards. Single digit → match by index (0-9).
+    Anything else → match serial number as substring (case-insensitive).
+    Raises ValueError on no match or ambiguous match.
+    """
+    if device_filter is None:
+        return keyboards
+
+    # Try index match first (single digit only — serials are long hex strings)
+    if len(device_filter) == 1 and device_filter.isdigit():
+        idx = int(device_filter)
+        for kb in keyboards:
+            if kb.index == idx:
+                return [kb]
+        raise ValueError(
+            f"No keyboard at index {idx}. "
+            f"Available: {', '.join(str(kb.index) for kb in keyboards)}"
+        )
+
+    # Serial substring match (case-insensitive)
+    needle = device_filter.lower()
+    matches = [kb for kb in keyboards if needle in kb.serial.lower()]
+    if len(matches) == 1:
+        return matches
+    if len(matches) == 0:
+        raise ValueError(
+            f"No keyboard serial matches '{device_filter}'. "
+            f"Use --list-keyboards to see connected devices."
+        )
+    raise ValueError(
+        f"'{device_filter}' matches {len(matches)} keyboards — be more specific. "
+        f"Serials: {', '.join(m.serial for m in matches)}"
+    )
+
+
+def find_raw_hid_path(vid: int = NUPHY_VID, pid: int = NUPHY_PID) -> bytes | None:
+    """Find the Raw HID interface path for the NuPhy keyboard."""
+    keyboards = find_keyboards(vid, pid)
+    return keyboards[0].path if keyboards else None
 
 
 def build_packet(command_id: int, *args: int) -> bytes:
@@ -65,8 +128,6 @@ def streaming_mode(device: hid.device):
         device.write(build_packet(CMD_STREAMING_MODE_OFF))
         resp = device.read(32, timeout_ms=1000)
         if not resp or resp[0] != CMD_STREAMING_MODE_OFF:
-            import sys
-
             print(
                 "Warning: failed to confirm streaming mode disabled. "
                 "Keyboard may need USB replug.",

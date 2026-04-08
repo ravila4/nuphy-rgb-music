@@ -1,10 +1,11 @@
 import pytest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 from nuphy_rgb.hid_utils import (
     CMD_STREAMING_MODE_OFF,
     CMD_STREAMING_MODE_ON,
     CMD_STREAM_RGB_DATA,
+    KeyboardInfo,
     LEDS_PER_PACKET,
     NUPHY_PID,
     NUPHY_VID,
@@ -13,6 +14,7 @@ from nuphy_rgb.hid_utils import (
     RAW_HID_USAGE_PAGE,
     build_packet,
     find_raw_hid_path,
+    select_keyboards,
     send_frame,
     streaming_mode,
 )
@@ -78,6 +80,7 @@ class TestFindRawHidPath:
                 "usage_page": 0x01,
                 "usage": 0x06,
                 "path": b"keyboard-path",
+                "serial_number": "AAAA",
             },
             {
                 "vendor_id": NUPHY_VID,
@@ -85,6 +88,7 @@ class TestFindRawHidPath:
                 "usage_page": RAW_HID_USAGE_PAGE,
                 "usage": RAW_HID_USAGE,
                 "path": b"raw-hid-path",
+                "serial_number": "BBBB",
             },
         ]
         assert find_raw_hid_path() == b"raw-hid-path"
@@ -103,6 +107,7 @@ class TestFindRawHidPath:
                 "usage_page": 0x01,
                 "usage": 0x06,
                 "path": b"keyboard-path",
+                "serial_number": "AAAA",
             },
         ]
         assert find_raw_hid_path() is None
@@ -196,3 +201,61 @@ class TestStreamingMode:
         with pytest.raises(ConnectionError, match="streaming mode"):
             with streaming_mode(device):
                 pass
+
+
+# -- Fixtures for select_keyboards tests --
+
+TWO_KEYBOARDS = [
+    KeyboardInfo(index=0, path=b"path-a", serial="31002F00085359583534352000000000"),
+    KeyboardInfo(index=1, path=b"path-b", serial="1A003E00145359583534332000000000"),
+]
+
+
+class TestSelectKeyboards:
+    def test_none_filter_returns_all(self):
+        result = select_keyboards(TWO_KEYBOARDS, None)
+        assert len(result) == 2
+
+    def test_index_zero(self):
+        result = select_keyboards(TWO_KEYBOARDS, "0")
+        assert len(result) == 1
+        assert result[0].index == 0
+
+    def test_index_one(self):
+        result = select_keyboards(TWO_KEYBOARDS, "1")
+        assert len(result) == 1
+        assert result[0].index == 1
+
+    def test_index_out_of_range(self):
+        with pytest.raises(ValueError, match="No keyboard at index 5"):
+            select_keyboards(TWO_KEYBOARDS, "5")
+
+    def test_serial_suffix_match(self):
+        result = select_keyboards(TWO_KEYBOARDS, "3520")
+        assert len(result) == 1
+        assert result[0].serial.endswith("352000000000")
+
+    def test_serial_substring_match(self):
+        result = select_keyboards(TWO_KEYBOARDS, "1A003E")
+        assert len(result) == 1
+        assert result[0].index == 1
+
+    def test_serial_case_insensitive(self):
+        result = select_keyboards(TWO_KEYBOARDS, "1a003e")
+        assert len(result) == 1
+
+    def test_serial_no_match(self):
+        with pytest.raises(ValueError, match="No keyboard serial"):
+            select_keyboards(TWO_KEYBOARDS, "DEADBEEF")
+
+    def test_serial_ambiguous_match(self):
+        # "000000" appears in both serials
+        with pytest.raises(ValueError, match="matches 2"):
+            select_keyboards(TWO_KEYBOARDS, "000000")
+
+    def test_empty_keyboard_list_with_none_filter(self):
+        assert select_keyboards([], None) == []
+
+    def test_empty_keyboard_list_with_filter(self):
+        with pytest.raises(ValueError):
+            select_keyboards([], "0")
