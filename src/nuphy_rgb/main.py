@@ -143,7 +143,7 @@ def run(audio_device: int | None = None, fps: int = 30, debug: bool = False) -> 
                     send_frame(device, last_colors)
 
                     if debug and frame_count % 30 == 0 and frame is not None:
-                        print(f"  RGB={last_colors[0]} rms={frame.rms:.3f} bass={frame.bass:.3f} freq={frame.dominant_freq:.0f}Hz beat={frame.is_beat}")
+                        print(f"  RGB={last_colors[0]} raw_rms={frame.raw_rms:.3f} rms={frame.rms:.3f} bass={frame.bass:.3f} freq={frame.dominant_freq:.0f}Hz beat={frame.is_beat}")
 
                     frame_count += 1
 

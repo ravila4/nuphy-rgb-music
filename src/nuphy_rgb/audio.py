@@ -25,6 +25,7 @@ class AudioFrame:
     rms: float
     is_beat: bool
     timestamp: float
+    raw_rms: float = 0.0
     onset_strength: float = 0.0
     spectral_flux: float = 0.0
     mid_beat: bool = False
@@ -268,6 +269,7 @@ class AudioCapture:
             highs=highs,
             dominant_freq=dominant_freq,
             rms=rms,
+            raw_rms=raw_rms,
             is_beat=is_beat,
             timestamp=time.monotonic(),
             onset_strength=onset_strength,

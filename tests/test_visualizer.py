@@ -13,6 +13,8 @@ def _make_frame(**kwargs) -> AudioFrame:
         dominant_freq=0.0, rms=0.0, is_beat=False, timestamp=0.0,
     )
     defaults.update(kwargs)
+    # Default raw_rms to match rms so ColorWash tests work
+    defaults.setdefault("raw_rms", defaults["rms"])
     return AudioFrame(**defaults)
 
 
@@ -77,15 +79,15 @@ class TestColorWash:
 
     def test_beat_boosts_brightness(self):
         viz = ColorWash(num_leds=NUM_LEDS)
-        # Stabilize with non-beat frames
+        # Use moderate raw_rms so beat glow has headroom
         for _ in range(20):
-            viz.render(_make_frame(rms=0.5, dominant_freq=440.0))
-        no_beat = viz.render(_make_frame(rms=0.5, dominant_freq=440.0, is_beat=False))
+            viz.render(_make_frame(rms=0.5, raw_rms=0.15, dominant_freq=440.0))
+        no_beat = viz.render(_make_frame(rms=0.5, raw_rms=0.15, dominant_freq=440.0, is_beat=False))
         # Reset to same state and test with beat
         viz2 = ColorWash(num_leds=NUM_LEDS)
         for _ in range(20):
-            viz2.render(_make_frame(rms=0.5, dominant_freq=440.0))
-        with_beat = viz2.render(_make_frame(rms=0.5, dominant_freq=440.0, is_beat=True))
+            viz2.render(_make_frame(rms=0.5, raw_rms=0.15, dominant_freq=440.0))
+        with_beat = viz2.render(_make_frame(rms=0.5, raw_rms=0.15, dominant_freq=440.0, is_beat=True))
 
         brightness_no_beat = sum(max(r, g, b) for r, g, b in no_beat)
         brightness_beat = sum(max(r, g, b) for r, g, b in with_beat)

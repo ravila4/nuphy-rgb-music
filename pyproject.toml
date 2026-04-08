@@ -27,5 +27,6 @@ testpaths = ["tests"]
 
 [dependency-groups]
 dev = [
+    "matplotlib>=3.10.8",
     "ollama>=0.6.1",
 ]
