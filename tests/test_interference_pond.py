@@ -2,42 +2,28 @@
 
 import numpy as np
 
-from nuphy_rgb.audio import AudioFrame
 from nuphy_rgb.effects.interference_pond import InterferencePond, _MAX_RIPPLES
 from nuphy_rgb.visualizer import freq_to_hue
 
+from helpers import make_frame
+
 NUM_LEDS = 84
-
-
-def _make_frame(**kwargs) -> AudioFrame:
-    defaults = dict(
-        bass=0.0,
-        mids=0.0,
-        highs=0.0,
-        dominant_freq=0.0,
-        rms=0.0,
-        is_beat=False,
-        timestamp=0.0,
-    )
-    defaults.update(kwargs)
-    defaults.setdefault("raw_rms", defaults["rms"])
-    return AudioFrame(**defaults)
 
 
 class TestBasicContract:
     def test_returns_84_tuples(self):
         viz = InterferencePond()
-        frame = _make_frame(rms=0.5, dominant_freq=440.0, is_beat=True, timestamp=0.0)
+        frame = make_frame(rms=0.5, dominant_freq=440.0, is_beat=True, timestamp=0.0)
         colors = viz.render(frame)
         assert len(colors) == NUM_LEDS
         assert all(len(c) == 3 for c in colors)
 
     def test_rgb_values_in_range(self):
         viz = InterferencePond()
-        frame = _make_frame(rms=0.8, dominant_freq=1000.0, bass=0.5, is_beat=True, timestamp=0.0)
+        frame = make_frame(rms=0.8, dominant_freq=1000.0, bass=0.5, is_beat=True, timestamp=0.0)
         # Run several frames so ripples expand
         for i in range(5):
-            colors = viz.render(_make_frame(
+            colors = viz.render(make_frame(
                 rms=0.8, dominant_freq=1000.0, bass=0.5, timestamp=i * 0.033
             ))
         for r, g, b in colors:
@@ -56,7 +42,7 @@ class TestSilence:
         viz = InterferencePond()
         # Feed silence: no beats, zero energy -- no ripples ever spawned
         for i in range(10):
-            colors = viz.render(_make_frame(rms=0.0, timestamp=i * 0.033))
+            colors = viz.render(make_frame(rms=0.0, timestamp=i * 0.033))
         total = sum(r + g + b for r, g, b in colors)
         assert total == 0
 
@@ -65,19 +51,19 @@ class TestRippleSpawning:
     def test_beat_spawns_ripple(self):
         viz = InterferencePond()
         assert len(viz._ripples) == 0
-        viz.render(_make_frame(is_beat=True, dominant_freq=440.0, rms=0.5, timestamp=0.0))
+        viz.render(make_frame(is_beat=True, dominant_freq=440.0, rms=0.5, timestamp=0.0))
         assert len(viz._ripples) == 1
 
     def test_no_beat_no_new_ripple(self):
         viz = InterferencePond()
-        viz.render(_make_frame(is_beat=False, rms=0.5, timestamp=0.0))
+        viz.render(make_frame(is_beat=False, rms=0.5, timestamp=0.0))
         assert len(viz._ripples) == 0
 
     def test_max_ripples_cap(self):
         viz = InterferencePond()
         # Spawn well beyond the cap
         for i in range(_MAX_RIPPLES + 5):
-            viz.render(_make_frame(
+            viz.render(make_frame(
                 is_beat=True,
                 dominant_freq=440.0,
                 rms=0.5,
@@ -89,7 +75,7 @@ class TestRippleSpawning:
         viz = InterferencePond()
         freq = 440.0
         expected_hue = freq_to_hue(freq)
-        viz.render(_make_frame(is_beat=True, dominant_freq=freq, rms=0.5, timestamp=0.0))
+        viz.render(make_frame(is_beat=True, dominant_freq=freq, rms=0.5, timestamp=0.0))
         assert len(viz._ripples) == 1
         assert abs(viz._ripples[0].hue - expected_hue) < 1e-6
 
@@ -98,8 +84,8 @@ class TestOutput:
     def test_single_ripple_produces_nonzero_output(self):
         viz = InterferencePond()
         # Spawn a ripple, then render a frame slightly later so the wave is active
-        viz.render(_make_frame(is_beat=True, dominant_freq=440.0, rms=0.5, timestamp=0.0))
-        colors = viz.render(_make_frame(rms=0.5, timestamp=0.033))
+        viz.render(make_frame(is_beat=True, dominant_freq=440.0, rms=0.5, timestamp=0.0))
+        colors = viz.render(make_frame(rms=0.5, timestamp=0.033))
         total = sum(r + g + b for r, g, b in colors)
         assert total > 0
 
@@ -109,13 +95,13 @@ class TestOutput:
         viz_high = InterferencePond()
 
         # Spawn identical ripples in both
-        beat_frame_low = _make_frame(is_beat=True, dominant_freq=440.0, rms=0.1, timestamp=0.0)
-        beat_frame_high = _make_frame(is_beat=True, dominant_freq=440.0, rms=0.9, timestamp=0.0)
+        beat_frame_low = make_frame(is_beat=True, dominant_freq=440.0, rms=0.1, timestamp=0.0)
+        beat_frame_high = make_frame(is_beat=True, dominant_freq=440.0, rms=0.9, timestamp=0.0)
         viz_low.render(beat_frame_low)
         viz_high.render(beat_frame_high)
 
-        colors_low = viz_low.render(_make_frame(rms=0.1, timestamp=0.033))
-        colors_high = viz_high.render(_make_frame(rms=0.9, timestamp=0.033))
+        colors_low = viz_low.render(make_frame(rms=0.1, timestamp=0.033))
+        colors_high = viz_high.render(make_frame(rms=0.9, timestamp=0.033))
 
         brightness_low = sum(max(r, g, b) for r, g, b in colors_low)
         brightness_high = sum(max(r, g, b) for r, g, b in colors_high)
@@ -126,11 +112,11 @@ class TestOutput:
         viz_bass = InterferencePond()
         viz_treble = InterferencePond()
 
-        viz_bass.render(_make_frame(is_beat=True, dominant_freq=60.0, rms=0.8, timestamp=0.0))
-        viz_treble.render(_make_frame(is_beat=True, dominant_freq=8000.0, rms=0.8, timestamp=0.0))
+        viz_bass.render(make_frame(is_beat=True, dominant_freq=60.0, rms=0.8, timestamp=0.0))
+        viz_treble.render(make_frame(is_beat=True, dominant_freq=8000.0, rms=0.8, timestamp=0.0))
 
-        colors_bass = viz_bass.render(_make_frame(rms=0.8, timestamp=0.033))
-        colors_treble = viz_treble.render(_make_frame(rms=0.8, timestamp=0.033))
+        colors_bass = viz_bass.render(make_frame(rms=0.8, timestamp=0.033))
+        colors_treble = viz_treble.render(make_frame(rms=0.8, timestamp=0.033))
 
         # Sum RGB channels as proxy -- at minimum the color distribution differs
         def dominant_channel(colors):
@@ -151,8 +137,8 @@ class TestNewAudioFields:
         viz_low = InterferencePond()
         viz_high = InterferencePond()
 
-        viz_low.render(_make_frame(is_beat=True, onset_strength=0.0, rms=0.5, timestamp=0.0))
-        viz_high.render(_make_frame(is_beat=True, onset_strength=1.0, rms=0.5, timestamp=0.0))
+        viz_low.render(make_frame(is_beat=True, onset_strength=0.0, rms=0.5, timestamp=0.0))
+        viz_high.render(make_frame(is_beat=True, onset_strength=1.0, rms=0.5, timestamp=0.0))
 
         # Both have been decayed by _update_ripples, but the ratio should hold
         assert viz_high._ripples[0].amplitude > viz_low._ripples[0].amplitude
@@ -166,15 +152,15 @@ class TestSparkle:
         viz_no_sparkle = InterferencePond()
         viz_sparkle = InterferencePond()
 
-        beat = _make_frame(is_beat=True, dominant_freq=440.0, rms=0.8, timestamp=0.0)
+        beat = make_frame(is_beat=True, dominant_freq=440.0, rms=0.8, timestamp=0.0)
         viz_no_sparkle.render(beat)
         viz_sparkle.render(beat)
 
         no_sparkle_colors = viz_no_sparkle.render(
-            _make_frame(rms=0.8, highs=0.0, timestamp=0.033)
+            make_frame(rms=0.8, highs=0.0, timestamp=0.033)
         )
         sparkle_colors = viz_sparkle.render(
-            _make_frame(rms=0.8, highs=1.0, timestamp=0.033)
+            make_frame(rms=0.8, highs=1.0, timestamp=0.033)
         )
 
         def count_near_white(colors):
@@ -198,10 +184,10 @@ class TestSparkle:
         viz_b = InterferencePond()
 
         frames = [
-            _make_frame(is_beat=True, dominant_freq=440.0, rms=0.8, highs=0.9, timestamp=0.0),
-            _make_frame(rms=0.7, highs=0.9, timestamp=0.033),
-            _make_frame(is_beat=True, dominant_freq=880.0, rms=0.6, highs=0.85, timestamp=0.066),
-            _make_frame(rms=0.5, highs=0.8, timestamp=0.099),
+            make_frame(is_beat=True, dominant_freq=440.0, rms=0.8, highs=0.9, timestamp=0.0),
+            make_frame(rms=0.7, highs=0.9, timestamp=0.033),
+            make_frame(is_beat=True, dominant_freq=880.0, rms=0.6, highs=0.85, timestamp=0.066),
+            make_frame(rms=0.5, highs=0.8, timestamp=0.099),
         ]
 
         for frame in frames:

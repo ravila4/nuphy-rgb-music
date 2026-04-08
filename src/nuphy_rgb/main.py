@@ -14,13 +14,17 @@ from pynput import keyboard
 from nuphy_rgb.audio import AudioCapture
 from nuphy_rgb.effects import ALL_EFFECTS
 from nuphy_rgb.hid_utils import (
+    SIDE_LED_COUNT,
     KeyboardInfo,
     find_keyboards,
     select_keyboards,
     send_frame,
+    send_side_frame,
+    side_streaming_mode,
     streaming_mode,
 )
 from nuphy_rgb.probe import probe
+from nuphy_rgb.sidelights import ALL_SIDELIGHTS
 from nuphy_rgb.visualizer import Visualizer
 
 
@@ -120,12 +124,25 @@ class _HotkeyState:
     Args:
         num_effects: Number of keyboard visualizer effects.
         effect_names: Names of the keyboard effects for set_by_name() support.
+        num_sidelights: Number of sidelight effects (0 = sidelights disabled).
+        sidelight_names: Names of sidelight effects for set_by_name() support.
     """
 
-    def __init__(self, num_effects: int, effect_names: Sequence[str] | None = None) -> None:
+    def __init__(
+        self,
+        num_effects: int,
+        effect_names: Sequence[str] | None = None,
+        num_sidelights: int = 0,
+        sidelight_names: Sequence[str] | None = None,
+    ) -> None:
         self._lock = threading.Lock()
         self.key = _CyclicIndex(num_effects, names=effect_names)
-        self.quit = False
+        self.side: _CyclicIndex | None = (
+            _CyclicIndex(num_sidelights, names=sidelight_names)
+            if num_sidelights > 0
+            else None
+        )
+        self._quit = False
 
     def next_effect(self) -> None:
         """Advance to the next keyboard effect."""
@@ -135,20 +152,40 @@ class _HotkeyState:
         """Move to the previous keyboard effect."""
         self.key.prev()
 
+    def next_sidelight(self) -> None:
+        """Advance to the next sidelight effect."""
+        if self.side is not None:
+            self.side.next()
+
+    def prev_sidelight(self) -> None:
+        """Move to the previous sidelight effect."""
+        if self.side is not None:
+            self.side.prev()
+
+    @property
+    def quit(self) -> bool:
+        """Whether a quit has been requested (thread-safe read)."""
+        with self._lock:
+            return self._quit
+
     def request_quit(self) -> None:
         """Signal the main loop to exit."""
         with self._lock:
-            self.quit = True
+            self._quit = True
 
 
 
 def _start_hotkey_listener(state: _HotkeyState) -> keyboard.GlobalHotKeys:
     """Start a pynput global hotkey listener (runs in a daemon thread)."""
-    hotkeys = keyboard.GlobalHotKeys({
+    hotkey_map = {
         "<ctrl>+<shift>+<right>": state.next_effect,
         "<ctrl>+<shift>+<left>": state.prev_effect,
         "<ctrl>+<shift>+q": state.request_quit,
-    })
+    }
+    if state.side is not None:
+        hotkey_map["<ctrl>+<shift>+<up>"] = state.next_sidelight
+        hotkey_map["<ctrl>+<shift>+<down>"] = state.prev_sidelight
+    hotkeys = keyboard.GlobalHotKeys(hotkey_map)
     hotkeys.daemon = True
     hotkeys.start()
     return hotkeys
@@ -206,6 +243,7 @@ def run(
     debug: bool = False,
     device_filter: str | None = None,
     effect: str | None = None,
+    sidelight: str | None = None,
 ) -> None:
     # Find audio device
     if audio_device is None:
@@ -246,16 +284,36 @@ def run(
     try:
         # Set up visualizers
         visualizers: list[Visualizer] = [cls() for cls in ALL_EFFECTS]
+        effect_names = [v.name for v in visualizers]
+
+        # Set up sidelight visualizers (opt-in)
+        if sidelight is not None:
+            side_visualizers = [cls() for cls in ALL_SIDELIGHTS]
+            sidelight_names = [v.name for v in side_visualizers]
+        else:
+            side_visualizers = []
+            sidelight_names = []
 
         # Set up hotkey listener
-        effect_names = [v.name for v in visualizers]
-        state = _HotkeyState(len(visualizers), effect_names=effect_names)
+        state = _HotkeyState(
+            len(visualizers),
+            effect_names=effect_names,
+            num_sidelights=len(side_visualizers),
+            sidelight_names=sidelight_names,
+        )
 
         # Apply --effect if specified
         if effect is not None:
             if not state.key.set_by_name(effect):
                 known = ", ".join(effect_names)
                 print(f"Error: unknown effect '{effect}'. Known effects: {known}")
+                sys.exit(1)
+
+        # Apply --sidelight if specified
+        if sidelight is not None and state.side is not None:
+            if not state.side.set_by_name(sidelight):
+                known = ", ".join(sidelight_names)
+                print(f"Error: unknown sidelight '{sidelight}'. Known: {known}")
                 sys.exit(1)
 
         listener = _start_hotkey_listener(state)
@@ -268,17 +326,25 @@ def run(
             f"{len(devices)} keyboard{'s' if len(devices) > 1 else ''}"
         )
         print(f"\nRunning: {visualizers[state.key.index].name} @ {fps}fps on {kb_label}")
+        if state.side is not None:
+            print(f"  Sidelight: {side_visualizers[state.side.index].name}")
         print("  Ctrl+Shift+Right/Left = cycle effects | Ctrl+Shift+Q = quit")
+        if state.side is not None:
+            print("  Ctrl+Shift+Up/Down = cycle sidelights")
         if debug:
             print("  Debug mode: Ctrl+C also quits\n")
 
         with ExitStack() as stack:
             for dev, _ in devices:
                 stack.enter_context(streaming_mode(dev))
+            if state.side is not None:
+                for dev, _ in devices:
+                    stack.enter_context(side_streaming_mode(dev))
 
             audio.start()
             try:
                 last_colors = [(0, 0, 0)] * led_count
+                last_side_colors = [(0, 0, 0)] * SIDE_LED_COUNT
                 frame_count = 0
                 while not state.quit:
                     t0 = time.monotonic()
@@ -288,14 +354,24 @@ def run(
                     if new_idx is not None:
                         print(f"  Effect: {visualizers[new_idx].name}")
 
+                    # Check for sidelight switch
+                    if state.side is not None:
+                        new_side_idx = state.side.poll_changed()
+                        if new_side_idx is not None:
+                            print(f"  Sidelight: {side_visualizers[new_side_idx].name}")
+
                     # Process audio
                     frame = audio.process_latest()
                     if frame is not None:
                         last_colors = visualizers[state.key.index].render(frame)
+                        if state.side is not None:
+                            last_side_colors = side_visualizers[state.side.index].render(frame)
 
                     # Send to all keyboards
                     for dev, _ in devices:
                         send_frame(dev, last_colors)
+                        if state.side is not None:
+                            send_side_frame(dev, last_side_colors)
 
                     if debug and frame_count % 30 == 0 and frame is not None:
                         print(f"  RGB={last_colors[0]} raw_rms={frame.raw_rms:.3f} rms={frame.rms:.3f} bass={frame.bass:.3f} freq={frame.dominant_freq:.0f}Hz beat={frame.is_beat}")
@@ -354,10 +430,27 @@ def main():
         "--list-effects", action="store_true",
         help="List available effects and exit.",
     )
+    parser.add_argument(
+        "--sidelight", type=str, default="VU Meter",
+        help="Sidelight effect name (default: 'VU Meter').",
+    )
+    parser.add_argument(
+        "--no-sidelight", action="store_true",
+        help="Disable host sidelights (firmware handles them).",
+    )
+    parser.add_argument(
+        "--list-sidelights", action="store_true",
+        help="List available sidelight effects and exit.",
+    )
     args = parser.parse_args()
 
     if args.list_effects:
         for cls in ALL_EFFECTS:
+            print(cls().name)
+        return
+
+    if args.list_sidelights:
+        for cls in ALL_SIDELIGHTS:
             print(cls().name)
         return
 
@@ -375,6 +468,7 @@ def main():
         debug=args.debug,
         device_filter=args.keyboard,
         effect=args.effect,
+        sidelight=None if args.no_sidelight else args.sidelight,
     )
 
 
