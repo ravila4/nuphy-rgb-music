@@ -35,16 +35,24 @@ class KeyboardInfo:
 def find_keyboards(
     vid: int = NUPHY_VID, pid: int = NUPHY_PID
 ) -> list[KeyboardInfo]:
-    """Find all connected NuPhy keyboards with Raw HID interfaces."""
+    """Find all connected NuPhy keyboards with Raw HID interfaces.
+
+    On Linux the hidraw backend does not populate usage_page/usage (always 0),
+    so we fall back to returning all VID/PID matches and let the caller probe.
+    """
     devices = hid.enumerate(vid, pid)
+    has_usage_info = all(d["usage_page"] != 0 for d in devices) if devices else True
     keyboards = []
     for d in devices:
-        if d["usage_page"] == RAW_HID_USAGE_PAGE and d["usage"] == RAW_HID_USAGE:
-            keyboards.append(KeyboardInfo(
-                index=len(keyboards),
-                path=d["path"],
-                serial=d["serial_number"],
-            ))
+        if has_usage_info and (
+            d["usage_page"] != RAW_HID_USAGE_PAGE or d["usage"] != RAW_HID_USAGE
+        ):
+            continue
+        keyboards.append(KeyboardInfo(
+            index=len(keyboards),
+            path=d["path"],
+            serial=d["serial_number"],
+        ))
     return keyboards
 
 

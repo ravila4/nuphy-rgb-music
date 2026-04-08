@@ -1,15 +1,14 @@
 # NuPhy Music-Reactive RGB
 
-Real-time music-reactive per-key RGB control for NuPhy keyboards, driven from
-macOS. Audio in, FFT, beat detection, and visualizer effects rendered at 30fps
-over USB Raw HID.
+Real-time music-reactive per-key RGB control for NuPhy keyboards. Audio in,
+FFT, beat detection, and visualizer effects rendered at 30fps over USB Raw HID.
 
 Tested on **NuPhy Air75 V2**. Support for other Air models incoming.
 
 ## Requirements
 
-- macOS (tested on Apple Silicon)
-- [BlackHole 2ch](https://existential.audio/blackhole/) for audio loopback
+- **macOS** (tested on Apple Silicon), or **Linux** (X11/Wayland, experimental)
+- Audio loopback: [BlackHole 2ch](https://existential.audio/blackhole/) on macOS; built-in monitor source on Linux
 - Python 3.11+
 - Custom QMK firmware with RGB streaming handler (see below)
 
@@ -25,7 +24,13 @@ toolchain needed.
 2. Flash:
 
    ```bash
-   brew install dfu-util  # if not installed
+   # macOS
+   brew install dfu-util
+   # Linux (Debian/Ubuntu)
+   sudo apt install dfu-util
+   # Linux (Fedora)
+   sudo dnf install dfu-util
+
    dfu-util -a 0 -d 0x19F5:0x3246 -s 0x08000000:leave \
      -D firmware/fallback/qmk_rgb_streaming_a62d78d.bin
    ```
@@ -41,7 +46,8 @@ The firmware lives in a [fork of ryodeushii/qmk-firmware](https://github.com/rav
 (branch: `nuphy-keyboards`):
 
 ```bash
-brew install qmk/qmk/qmk
+brew install qmk/qmk/qmk   # macOS
+python3 -m pip install qmk  # Linux
 qmk setup -H ~/Projects/qmk-firmware
 cd ~/Projects/qmk-firmware
 qmk compile -kb nuphy/air75_v2/ansi -km via
@@ -51,11 +57,29 @@ The built binary lands in `.build/nuphy_air75v2_ansi_via.bin`.
 
 ## Installation
 
+### macOS
+
 ```bash
 brew install hidapi blackhole-2ch
 ```
 
-Clone and install:
+### Linux (Debian/Ubuntu)
+
+```bash
+sudo apt install libhidapi-hidraw0
+sudo cp udev/99-nuphy.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+### Linux (Fedora)
+
+```bash
+sudo dnf install hidapi
+sudo cp udev/99-nuphy.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+### Clone and install
 
 ```bash
 git clone https://github.com/ravila4/nuphy-rgb-music.git
@@ -71,11 +95,22 @@ uv sync
 
 ### Audio setup
 
+#### macOS
+
 BlackHole creates a virtual audio device. To capture system audio:
 
 1. Open **Audio MIDI Setup** (built into macOS)
 2. Create a **Multi-Output Device** combining your speakers + BlackHole 2ch
 3. Set the Multi-Output Device as your system output
+
+#### Linux
+
+PipeWire and PulseAudio automatically expose monitor sources — no extra
+software needed. Run `nuphy-rgb --list-audio` to find yours (look for
+"Monitor of ...").
+
+If no monitor source appears, ensure `pipewire-alsa` or `pulseaudio-alsa`
+is installed for your distro.
 
 ## Usage
 
@@ -99,6 +134,9 @@ nuphy-rgb --audio-device 3 --fps 30
 | `Ctrl+Shift+Up` | Next sidelight |
 | `Ctrl+Shift+Down` | Previous sidelight |
 | `Ctrl+Shift+Q` | Quit |
+
+> **Linux/Wayland:** Global hotkeys require X11. Under Wayland, hotkeys are
+> unavailable — use `--effect` and `--sidelight` flags to select at launch.
 
 ## Effects
 

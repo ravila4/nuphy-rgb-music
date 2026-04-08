@@ -1,0 +1,2 @@
+# NuPhy Air75 V2 — allow non-root HID access for nuphy-rgb
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="19f5", ATTRS{idProduct}=="3246", MODE="0666"

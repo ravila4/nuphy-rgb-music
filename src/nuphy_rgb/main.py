@@ -212,10 +212,19 @@ def _start_hotkey_listener(state: _HotkeyState) -> _SafeGlobalHotKeys:
     return hotkeys
 
 
-def find_blackhole_device() -> int | None:
-    """Find the BlackHole audio device index."""
+def find_loopback_device() -> int | None:
+    """Find a system-audio loopback device.
+
+    macOS: BlackHole virtual audio device.
+    Linux: PulseAudio/PipeWire monitor source.
+    """
     for i, d in enumerate(sd.query_devices()):
-        if "BlackHole" in d["name"] and d["max_input_channels"] > 0:
+        if d["max_input_channels"] <= 0:
+            continue
+        name = d["name"]
+        if "BlackHole" in name:
+            return i
+        if sys.platform.startswith("linux") and name.lower().startswith("monitor of "):
             return i
     return None
 
@@ -225,7 +234,12 @@ def list_audio_devices() -> None:
     print("Audio input devices:")
     for i, d in enumerate(sd.query_devices()):
         if d["max_input_channels"] > 0:
-            marker = " <-- BlackHole" if "BlackHole" in d["name"] else ""
+            if "BlackHole" in d["name"]:
+                marker = " <-- BlackHole"
+            elif d["name"].lower().startswith("monitor of "):
+                marker = " <-- monitor source"
+            else:
+                marker = ""
             print(f"  {i}: {d['name']} ({d['max_input_channels']}ch){marker}")
 
 
@@ -280,9 +294,12 @@ def run(
 ) -> None:
     # Find audio device
     if audio_device is None:
-        audio_device = find_blackhole_device()
+        audio_device = find_loopback_device()
         if audio_device is None:
-            print("BlackHole not found. Install with: brew install blackhole-2ch")
+            if sys.platform == "darwin":
+                print("BlackHole not found. Install with: brew install blackhole-2ch")
+            else:
+                print("No monitor source found. Ensure PulseAudio/PipeWire is running.")
             print("Use --list-audio to see available inputs, --audio-device to specify.")
             sys.exit(1)
     print(f"Audio device: {sd.query_devices(audio_device)['name']} (index {audio_device})")
@@ -357,7 +374,11 @@ def run(
                 print(f"Error: unknown sidelight '{sidelight}'. Known: {known}")
                 sys.exit(1)
 
-        listener = _start_hotkey_listener(state)
+        try:
+            listener = _start_hotkey_listener(state)
+        except Exception:
+            listener = None
+            print("  Hotkeys unavailable (Wayland?). Use --effect/--sidelight flags.")
 
         # Set up audio capture
         audio = AudioCapture(device_index=audio_device)
@@ -438,7 +459,8 @@ def run(
                 pass
             finally:
                 audio.stop()
-                listener.stop()
+                if listener is not None:
+                    listener.stop()
     finally:
         for dev, _ in devices:
             dev.close()
@@ -451,7 +473,7 @@ def main():
     )
     parser.add_argument(
         "--audio-device", type=int, default=None,
-        help="Audio input device index (default: auto-detect BlackHole)",
+        help="Audio input device index (default: auto-detect loopback device)",
     )
     parser.add_argument(
         "--fps", type=int, default=30,

@@ -63,7 +63,10 @@ def main():
     path = find_raw_hid_path()
     if path is None:
         print("Keyboard not found. Is it plugged in via USB?")
-        print("(Also check: VIA must be closed, macOS Input Monitoring permission may be needed)")
+        if sys.platform == "darwin":
+            print("(Also check: VIA must be closed, macOS Input Monitoring permission may be needed)")
+        else:
+            print("(Also check: VIA must be closed, udev rules may be needed — see udev/99-nuphy.rules)")
         sys.exit(1)
 
     print(f"Found Raw HID interface: {path}")
@@ -73,7 +76,12 @@ def main():
         device.open_path(path)
     except OSError as e:
         print(f"Failed to open device: {e}")
-        print("On macOS, check System Settings > Privacy & Security > Input Monitoring")
+        if sys.platform == "darwin":
+            print("On macOS, check System Settings > Privacy & Security > Input Monitoring")
+        else:
+            print("On Linux, ensure udev rules are installed:")
+            print("  sudo cp udev/99-nuphy.rules /etc/udev/rules.d/")
+            print("  sudo udevadm control --reload-rules && sudo udevadm trigger")
         sys.exit(1)
 
     try:
