@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from contextlib import ExitStack
+from typing import Sequence
 
 import hid
 import sounddevice as sd
@@ -23,37 +24,122 @@ from nuphy_rgb.probe import probe
 from nuphy_rgb.visualizer import Visualizer
 
 
-class _HotkeyState:
-    """Thread-safe state controlled by global hotkeys."""
+class _CyclicIndex:
+    """Thread-safe cyclic index with an optional named-item registry.
 
-    def __init__(self, num_effects: int):
+    Tracks a current position within a fixed-size range [0, count) and
+    exposes next/prev/set navigation. A changed flag is set on each mutation
+    and consumed by poll_changed().
+
+    Args:
+        count: Number of positions in the cycle.
+        names: Optional list of names for set_by_name() lookups. Must have
+            exactly ``count`` entries if provided.
+    """
+
+    def __init__(self, count: int, names: Sequence[str] | None = None) -> None:
+        if count <= 0:
+            raise ValueError(f"count must be positive, got {count}")
         self._lock = threading.Lock()
-        self._num_effects = num_effects
-        self.viz_index = 0
+        self._count = count
+        self._index = 0
+        self._changed = False
+        self._names: list[str] | None = list(names) if names is not None else None
+
+    @property
+    def index(self) -> int:
+        """Current index (read-only snapshot)."""
+        with self._lock:
+            return self._index
+
+    def next(self) -> None:
+        """Advance to the next position, wrapping around."""
+        with self._lock:
+            self._index = (self._index + 1) % self._count
+            self._changed = True
+
+    def prev(self) -> None:
+        """Move to the previous position, wrapping around."""
+        with self._lock:
+            self._index = (self._index - 1) % self._count
+            self._changed = True
+
+    def set(self, index: int) -> None:
+        """Jump directly to a position.
+
+        Args:
+            index: Target index in [0, count).
+
+        Raises:
+            ValueError: If index is out of range.
+        """
+        if index < 0 or index >= self._count:
+            raise ValueError(f"index {index} out of range [0, {self._count})")
+        with self._lock:
+            self._index = index
+            self._changed = True
+
+    def set_by_name(self, name: str) -> bool:
+        """Jump to the position whose name matches (case-insensitive).
+
+        Args:
+            name: Name to search for.
+
+        Returns:
+            True if found and index was updated; False if not found.
+
+        Raises:
+            ValueError: If this instance was created without names.
+        """
+        if self._names is None:
+            raise ValueError("_CyclicIndex was created without names; cannot use set_by_name()")
+        needle = name.lower()
+        for i, n in enumerate(self._names):
+            if n.lower() == needle:
+                with self._lock:
+                    self._index = i
+                    self._changed = True
+                return True
+        return False
+
+    def poll_changed(self) -> int | None:
+        """Return current index if changed since last poll, else None.
+
+        Resets the changed flag.
+        """
+        with self._lock:
+            if self._changed:
+                self._changed = False
+                return self._index
+            return None
+
+
+class _HotkeyState:
+    """Thread-safe state controlled by global hotkeys.
+
+    Args:
+        num_effects: Number of keyboard visualizer effects.
+        effect_names: Names of the keyboard effects for set_by_name() support.
+    """
+
+    def __init__(self, num_effects: int, effect_names: Sequence[str] | None = None) -> None:
+        self._lock = threading.Lock()
+        self.key = _CyclicIndex(num_effects, names=effect_names)
         self.quit = False
-        self.changed = False  # flag: effect was just switched
 
     def next_effect(self) -> None:
-        with self._lock:
-            self.viz_index = (self.viz_index + 1) % self._num_effects
-            self.changed = True
+        """Advance to the next keyboard effect."""
+        self.key.next()
 
     def prev_effect(self) -> None:
-        with self._lock:
-            self.viz_index = (self.viz_index - 1) % self._num_effects
-            self.changed = True
+        """Move to the previous keyboard effect."""
+        self.key.prev()
 
     def request_quit(self) -> None:
+        """Signal the main loop to exit."""
         with self._lock:
             self.quit = True
 
-    def poll_changed(self) -> int | None:
-        """Return new index if changed, else None. Resets the flag."""
-        with self._lock:
-            if self.changed:
-                self.changed = False
-                return self.viz_index
-            return None
 
 
 def _start_hotkey_listener(state: _HotkeyState) -> keyboard.GlobalHotKeys:
@@ -119,6 +205,7 @@ def run(
     fps: int = 30,
     debug: bool = False,
     device_filter: str | None = None,
+    effect: str | None = None,
 ) -> None:
     # Find audio device
     if audio_device is None:
@@ -161,7 +248,16 @@ def run(
         visualizers: list[Visualizer] = [cls() for cls in ALL_EFFECTS]
 
         # Set up hotkey listener
-        state = _HotkeyState(len(visualizers))
+        effect_names = [v.name for v in visualizers]
+        state = _HotkeyState(len(visualizers), effect_names=effect_names)
+
+        # Apply --effect if specified
+        if effect is not None:
+            if not state.key.set_by_name(effect):
+                known = ", ".join(effect_names)
+                print(f"Error: unknown effect '{effect}'. Known effects: {known}")
+                sys.exit(1)
+
         listener = _start_hotkey_listener(state)
 
         # Set up audio capture
@@ -171,7 +267,7 @@ def run(
         kb_label = (
             f"{len(devices)} keyboard{'s' if len(devices) > 1 else ''}"
         )
-        print(f"\nRunning: {visualizers[state.viz_index].name} @ {fps}fps on {kb_label}")
+        print(f"\nRunning: {visualizers[state.key.index].name} @ {fps}fps on {kb_label}")
         print("  Ctrl+Shift+Right/Left = cycle effects | Ctrl+Shift+Q = quit")
         if debug:
             print("  Debug mode: Ctrl+C also quits\n")
@@ -188,14 +284,14 @@ def run(
                     t0 = time.monotonic()
 
                     # Check for effect switch
-                    new_idx = state.poll_changed()
+                    new_idx = state.key.poll_changed()
                     if new_idx is not None:
                         print(f"  Effect: {visualizers[new_idx].name}")
 
                     # Process audio
                     frame = audio.process_latest()
                     if frame is not None:
-                        last_colors = visualizers[state.viz_index].render(frame)
+                        last_colors = visualizers[state.key.index].render(frame)
 
                     # Send to all keyboards
                     for dev, _ in devices:
@@ -250,6 +346,10 @@ def main():
         "--debug", action="store_true",
         help="Debug mode: prints frame data, Ctrl+C to quit",
     )
+    parser.add_argument(
+        "--effect", type=str, default=None,
+        help="Start on a specific effect by name (case-insensitive, e.g. colorwash).",
+    )
     args = parser.parse_args()
 
     if args.list_audio:
@@ -265,6 +365,7 @@ def main():
         fps=args.fps,
         debug=args.debug,
         device_filter=args.keyboard,
+        effect=args.effect,
     )
 
 
