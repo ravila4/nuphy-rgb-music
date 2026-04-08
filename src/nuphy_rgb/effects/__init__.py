@@ -12,8 +12,8 @@ from nuphy_rgb.effects.spectral_waterfall import SpectralWaterfall
 from nuphy_rgb.effects.strange_attractor import StrangeAttractor
 
 ALL_EFFECTS = [
-    ColorWash,
     InterferencePond,
+    ColorWash,
     Mycelium,
     EventHorizon,
     StrangeAttractor,
