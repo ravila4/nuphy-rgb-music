@@ -80,11 +80,14 @@ BlackHole creates a virtual audio device. To capture system audio:
 ## Usage
 
 ```bash
-nuphy-rgb              # auto-detects BlackHole and keyboard
-nuphy-rgb --debug      # prints frame data
-nuphy-rgb --list-devices
+nuphy-rgb                                    # auto-detects everything, VU Meter sidelights on
+nuphy-rgb --debug                            # prints frame data
+nuphy-rgb --no-sidelight                     # firmware handles sidelights
+nuphy-rgb --effect blackout --sidelight "VU Meter"  # sidelights only
+nuphy-rgb --effect "Spectral Waterfall"      # start on a specific effect
+nuphy-rgb --list-effects                     # list keyboard effects
+nuphy-rgb --list-sidelights                  # list sidelight effects
 nuphy-rgb --audio-device 3 --fps 30
-nuphy-rgb --effect "Spectral Waterfall"  # start on a specific effect
 ```
 
 ### Hotkeys
@@ -93,6 +96,8 @@ nuphy-rgb --effect "Spectral Waterfall"  # start on a specific effect
 |----------|--------|
 | `Ctrl+Shift+Right` | Next effect |
 | `Ctrl+Shift+Left` | Previous effect |
+| `Ctrl+Shift+Up` | Next sidelight |
+| `Ctrl+Shift+Down` | Previous sidelight |
 | `Ctrl+Shift+Q` | Quit |
 
 ## Effects
@@ -105,6 +110,17 @@ nuphy-rgb --effect "Spectral Waterfall"  # start on a specific effect
 | Event Horizon | Gravitational lensing effect around a central attractor |
 | Strange Attractor | Chaotic particle system mapped to the keyboard grid |
 | Spectral Waterfall | Scrolling spectrogram — frequency on x-axis, time on y-axis |
+| Blackout | All LEDs off — useful for isolating sidelight effects |
+
+## Sidelights
+
+Host-controlled side LED bars (12 WS2812 LEDs, 6 per side). Enabled by
+default with the VU Meter effect. Use `--no-sidelight` to let the firmware
+handle them instead.
+
+| Effect | Description |
+|--------|-------------|
+| VU Meter | Symmetric bass-driven bar graph — green, yellow, red |
 
 More effects in development.
 
