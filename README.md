@@ -84,6 +84,7 @@ nuphy-rgb              # auto-detects BlackHole and keyboard
 nuphy-rgb --debug      # prints frame data
 nuphy-rgb --list-devices
 nuphy-rgb --audio-device 3 --fps 30
+nuphy-rgb --effect "Spectral Waterfall"  # start on a specific effect
 ```
 
 ### Hotkeys
