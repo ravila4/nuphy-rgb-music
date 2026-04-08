@@ -180,7 +180,22 @@ class _HotkeyState:
 
 
 
-def _start_hotkey_listener(state: _HotkeyState) -> keyboard.GlobalHotKeys:
+class _SafeGlobalHotKeys(keyboard.GlobalHotKeys):
+    """GlobalHotKeys that tolerates the macOS/pynput injected-arg bug.
+
+    pynput 1.8.x added an ``injected`` parameter to callbacks but the Darwin
+    backend sometimes omits it, crashing ``GlobalHotKeys._on_press``.
+    Absorbing extra args with ``*args`` prevents the TypeError.
+    """
+
+    def _on_press(self, key, *args):  # type: ignore[override]
+        return super()._on_press(key, *args)
+
+    def _on_release(self, key, *args):  # type: ignore[override]
+        return super()._on_release(key, *args)
+
+
+def _start_hotkey_listener(state: _HotkeyState) -> _SafeGlobalHotKeys:
     """Start a pynput global hotkey listener (runs in a daemon thread)."""
     hotkey_map = {
         "<ctrl>+<shift>+<right>": state.next_effect,
@@ -190,7 +205,7 @@ def _start_hotkey_listener(state: _HotkeyState) -> keyboard.GlobalHotKeys:
     if state.side is not None:
         hotkey_map["<ctrl>+<shift>+<up>"] = state.next_sidelight
         hotkey_map["<ctrl>+<shift>+<down>"] = state.prev_sidelight
-    hotkeys = keyboard.GlobalHotKeys(hotkey_map)
+    hotkeys = _SafeGlobalHotKeys(hotkey_map)
     hotkeys.daemon = True
     hotkeys.start()
     return hotkeys
@@ -301,8 +316,7 @@ def run(
     try:
         # Set up visualizers: built-in + plugins
         builtin_names = {cls.name for cls in ALL_EFFECTS}
-        plugin_effects = discover_effects(config_dir) if config_dir else discover_effects()
-        plugin_effects = _dedupe_plugins(plugin_effects, builtin_names)
+        plugin_effects = _dedupe_plugins(discover_effects(config_dir), builtin_names)
         all_effect_classes = list(ALL_EFFECTS) + plugin_effects
 
         visualizers: list[Visualizer] = [cls() for cls in all_effect_classes]
@@ -311,10 +325,7 @@ def run(
         # Set up sidelight visualizers (opt-in): built-in + plugins
         if sidelight is not None:
             builtin_side_names = {cls.name for cls in ALL_SIDELIGHTS}
-            plugin_sidelights = (
-                discover_sidelights(config_dir) if config_dir else discover_sidelights()
-            )
-            plugin_sidelights = _dedupe_plugins(plugin_sidelights, builtin_side_names)
+            plugin_sidelights = _dedupe_plugins(discover_sidelights(config_dir), builtin_side_names)
             all_sidelight_classes = list(ALL_SIDELIGHTS) + plugin_sidelights
 
             side_visualizers = [cls() for cls in all_sidelight_classes]
@@ -490,13 +501,15 @@ def main():
     config_dir = Path(args.effects_dir) if args.effects_dir else None
 
     if args.list_effects:
-        plugin_classes = discover_effects(config_dir) if config_dir else discover_effects()
+        builtin_names = {cls.name for cls in ALL_EFFECTS}
+        plugin_classes = _dedupe_plugins(discover_effects(config_dir), builtin_names)
         for cls in list(ALL_EFFECTS) + plugin_classes:
             print(cls.name)
         return
 
     if args.list_sidelights:
-        plugin_classes = discover_sidelights(config_dir) if config_dir else discover_sidelights()
+        builtin_names = {cls.name for cls in ALL_SIDELIGHTS}
+        plugin_classes = _dedupe_plugins(discover_sidelights(config_dir), builtin_names)
         for cls in list(ALL_SIDELIGHTS) + plugin_classes:
             print(cls.name)
         return

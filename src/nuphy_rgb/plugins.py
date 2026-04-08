@@ -76,11 +76,11 @@ def _scan_directory(directory: Path) -> list[type]:
     return classes
 
 
-def discover_effects(config_dir: Path = DEFAULT_CONFIG_DIR) -> list[type]:
+def discover_effects(config_dir: Path | None = None) -> list[type]:
     """Discover plugin keyboard effects from ``config_dir/effects/``."""
-    return _scan_directory(config_dir / "effects")
+    return _scan_directory((config_dir or DEFAULT_CONFIG_DIR) / "effects")
 
 
-def discover_sidelights(config_dir: Path = DEFAULT_CONFIG_DIR) -> list[type]:
+def discover_sidelights(config_dir: Path | None = None) -> list[type]:
     """Discover plugin sidelight effects from ``config_dir/sidelights/``."""
-    return _scan_directory(config_dir / "sidelights")
+    return _scan_directory((config_dir or DEFAULT_CONFIG_DIR) / "sidelights")

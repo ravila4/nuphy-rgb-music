@@ -124,6 +124,50 @@ handle them instead.
 
 More effects in development.
 
+## Plugins
+
+Drop a `.py` file into `~/.config/nuphy-rgb/effects/` (keyboard) or
+`~/.config/nuphy-rgb/sidelights/` (side bars) and it's automatically
+discovered on next launch.
+
+### Creating a plugin
+
+A plugin is a Python class with a `name` string and a `render(self, frame)`
+method. Import everything you need from `nuphy_rgb.plugin_api`:
+
+```python
+from nuphy_rgb.plugin_api import AudioFrame, NUM_LEDS, grid_to_leds, freq_to_hue
+
+class MyEffect:
+    name = "My Effect"
+
+    def render(self, frame: AudioFrame) -> list[tuple[int, int, int]]:
+        hue = freq_to_hue(frame.dominant_freq)
+        brightness = int(frame.rms * 255)
+        # ... your logic here ...
+        return [(brightness, 0, 0)] * NUM_LEDS
+```
+
+### Plugin directory layout
+
+```
+~/.config/nuphy-rgb/
+  effects/
+    my_effect.py          # single-file plugin
+    spectral-pack/        # subdirectory packs work too
+      aurora.py
+      _helpers.py         # underscore-prefixed files are skipped
+  sidelights/
+    my_sidelight.py
+```
+
+### Notes
+
+- Plugins that crash are skipped automatically -- the next effect takes over
+- Plugin names that collide with built-in effects are ignored
+- Use `--effects-dir` to override the config directory
+- Use `--list-effects` / `--list-sidelights` to verify your plugin loads
+
 ## Reference Repos
 
 - [ryodeushii/qmk-firmware](https://github.com/ryodeushii/qmk-firmware) — most maintained NuPhy QMK fork (base for our firmware)
