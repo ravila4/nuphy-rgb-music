@@ -109,8 +109,8 @@ PipeWire and PulseAudio automatically expose monitor sources — no extra
 software needed. Run `nuphy-rgb --list-audio` to find yours (look for
 "Monitor of ...").
 
-If no monitor source appears, ensure `pipewire-alsa` or `pulseaudio-alsa`
-is installed for your distro.
+If no monitor source appears, ensure PipeWire or PulseAudio ALSA integration
+is installed (`pipewire-pulse`, `pipewire-alsa`, or equivalent for your distro).
 
 ## Usage
 

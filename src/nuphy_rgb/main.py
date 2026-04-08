@@ -236,7 +236,7 @@ def list_audio_devices() -> None:
         if d["max_input_channels"] > 0:
             if "BlackHole" in d["name"]:
                 marker = " <-- BlackHole"
-            elif d["name"].lower().startswith("monitor of "):
+            elif sys.platform.startswith("linux") and d["name"].lower().startswith("monitor of "):
                 marker = " <-- monitor source"
             else:
                 marker = ""
@@ -377,6 +377,7 @@ def run(
         try:
             listener = _start_hotkey_listener(state)
         except Exception:
+            log.debug("Hotkey listener failed to start", exc_info=True)
             listener = None
             print("  Hotkeys unavailable (Wayland?). Use --effect/--sidelight flags.")
 

@@ -41,10 +41,11 @@ def find_keyboards(
     so we fall back to returning all VID/PID matches and let the caller probe.
     """
     devices = hid.enumerate(vid, pid)
-    has_usage_info = all(d["usage_page"] != 0 for d in devices) if devices else True
     keyboards = []
     for d in devices:
-        if has_usage_info and (
+        # usage_page=0 means the backend didn't populate it (Linux hidraw) —
+        # accept the device and let the caller probe to confirm.
+        if d["usage_page"] != 0 and (
             d["usage_page"] != RAW_HID_USAGE_PAGE or d["usage"] != RAW_HID_USAGE
         ):
             continue

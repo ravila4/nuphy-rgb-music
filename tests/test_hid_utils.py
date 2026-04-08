@@ -13,6 +13,7 @@ from nuphy_rgb.hid_utils import (
     RAW_HID_USAGE,
     RAW_HID_USAGE_PAGE,
     build_packet,
+    find_keyboards,
     find_raw_hid_path,
     select_keyboards,
     send_frame,
@@ -111,6 +112,60 @@ class TestFindRawHidPath:
             },
         ]
         assert find_raw_hid_path() is None
+
+
+class TestFindKeyboardsHidrawFallback:
+    """On Linux the hidraw backend returns usage_page=0 for all devices."""
+
+    @patch("nuphy_rgb.hid_utils.hid")
+    def test_usage_page_zero_passes_through(self, mock_hid):
+        mock_hid.enumerate.return_value = [
+            {
+                "usage_page": 0, "usage": 0,
+                "path": b"hidraw0", "serial_number": "AAA",
+            },
+            {
+                "usage_page": 0, "usage": 0,
+                "path": b"hidraw1", "serial_number": "AAA",
+            },
+        ]
+        kbs = find_keyboards()
+        assert len(kbs) == 2
+
+    @patch("nuphy_rgb.hid_utils.hid")
+    def test_mixed_usage_page_keeps_zero_entries(self, mock_hid):
+        """A keyboard may expose both usage_page=1 (keyboard HID) and
+        usage_page=0 (raw HID on hidraw). Both should be returned."""
+        mock_hid.enumerate.return_value = [
+            {
+                "usage_page": 0x01, "usage": 0x06,
+                "path": b"keyboard", "serial_number": "AAA",
+            },
+            {
+                "usage_page": 0, "usage": 0,
+                "path": b"raw-hid", "serial_number": "AAA",
+            },
+        ]
+        kbs = find_keyboards()
+        paths = [kb.path for kb in kbs]
+        assert b"raw-hid" in paths
+
+    @patch("nuphy_rgb.hid_utils.hid")
+    def test_normal_usage_page_still_filters(self, mock_hid):
+        """When usage_page is populated (macOS), non-matching entries are excluded."""
+        mock_hid.enumerate.return_value = [
+            {
+                "usage_page": 0x01, "usage": 0x06,
+                "path": b"keyboard", "serial_number": "AAA",
+            },
+            {
+                "usage_page": RAW_HID_USAGE_PAGE, "usage": RAW_HID_USAGE,
+                "path": b"raw-hid", "serial_number": "AAA",
+            },
+        ]
+        kbs = find_keyboards()
+        assert len(kbs) == 1
+        assert kbs[0].path == b"raw-hid"
 
 
 class TestSendFrame:
