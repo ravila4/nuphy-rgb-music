@@ -1,10 +1,12 @@
 """Main loop: audio capture -> visualization -> HID output."""
 
 import argparse
+import logging
 import sys
 import threading
 import time
 from contextlib import ExitStack
+from pathlib import Path
 from typing import Sequence
 
 import hid
@@ -23,9 +25,12 @@ from nuphy_rgb.hid_utils import (
     side_streaming_mode,
     streaming_mode,
 )
+from nuphy_rgb.plugins import discover_effects, discover_sidelights
 from nuphy_rgb.probe import probe
 from nuphy_rgb.sidelights import ALL_SIDELIGHTS
 from nuphy_rgb.visualizer import Visualizer
+
+log = logging.getLogger(__name__)
 
 
 class _CyclicIndex:
@@ -237,6 +242,17 @@ def list_keyboards() -> None:
         print(f"  {kb.index}: serial={kb.serial}  path={kb.path}")
 
 
+def _dedupe_plugins(plugin_classes: list[type], builtin_names: set[str]) -> list[type]:
+    """Filter out plugin classes whose name collides with a built-in."""
+    kept: list[type] = []
+    for cls in plugin_classes:
+        if cls.name in builtin_names:
+            log.warning("Plugin '%s' shadows a built-in effect, skipping", cls.name)
+        else:
+            kept.append(cls)
+    return kept
+
+
 def run(
     audio_device: int | None = None,
     fps: int = 30,
@@ -244,6 +260,7 @@ def run(
     device_filter: str | None = None,
     effect: str | None = None,
     sidelight: str | None = None,
+    config_dir: Path | None = None,
 ) -> None:
     # Find audio device
     if audio_device is None:
@@ -282,13 +299,25 @@ def run(
     led_count = led_counts.pop()
 
     try:
-        # Set up visualizers
-        visualizers: list[Visualizer] = [cls() for cls in ALL_EFFECTS]
+        # Set up visualizers: built-in + plugins
+        builtin_names = {cls.name for cls in ALL_EFFECTS}
+        plugin_effects = discover_effects(config_dir) if config_dir else discover_effects()
+        plugin_effects = _dedupe_plugins(plugin_effects, builtin_names)
+        all_effect_classes = list(ALL_EFFECTS) + plugin_effects
+
+        visualizers: list[Visualizer] = [cls() for cls in all_effect_classes]
         effect_names = [v.name for v in visualizers]
 
-        # Set up sidelight visualizers (opt-in)
+        # Set up sidelight visualizers (opt-in): built-in + plugins
         if sidelight is not None:
-            side_visualizers = [cls() for cls in ALL_SIDELIGHTS]
+            builtin_side_names = {cls.name for cls in ALL_SIDELIGHTS}
+            plugin_sidelights = (
+                discover_sidelights(config_dir) if config_dir else discover_sidelights()
+            )
+            plugin_sidelights = _dedupe_plugins(plugin_sidelights, builtin_side_names)
+            all_sidelight_classes = list(ALL_SIDELIGHTS) + plugin_sidelights
+
+            side_visualizers = [cls() for cls in all_sidelight_classes]
             sidelight_names = [v.name for v in side_visualizers]
         else:
             side_visualizers = []
@@ -363,9 +392,19 @@ def run(
                     # Process audio
                     frame = audio.process_latest()
                     if frame is not None:
-                        last_colors = visualizers[state.key.index].render(frame)
+                        try:
+                            last_colors = visualizers[state.key.index].render(frame)
+                        except Exception:
+                            name = visualizers[state.key.index].name
+                            log.warning("Effect '%s' crashed, advancing", name, exc_info=True)
+                            state.next_effect()
                         if state.side is not None:
-                            last_side_colors = side_visualizers[state.side.index].render(frame)
+                            try:
+                                last_side_colors = side_visualizers[state.side.index].render(frame)
+                            except Exception:
+                                name = side_visualizers[state.side.index].name
+                                log.warning("Sidelight '%s' crashed, advancing", name, exc_info=True)
+                                state.next_sidelight()
 
                     # Send to all keyboards
                     for dev, _ in devices:
@@ -442,16 +481,24 @@ def main():
         "--list-sidelights", action="store_true",
         help="List available sidelight effects and exit.",
     )
+    parser.add_argument(
+        "--effects-dir", type=str, default=None,
+        help="Custom plugin directory (default: ~/.config/nuphy-rgb).",
+    )
     args = parser.parse_args()
 
+    config_dir = Path(args.effects_dir) if args.effects_dir else None
+
     if args.list_effects:
-        for cls in ALL_EFFECTS:
-            print(cls().name)
+        plugin_classes = discover_effects(config_dir) if config_dir else discover_effects()
+        for cls in list(ALL_EFFECTS) + plugin_classes:
+            print(cls.name)
         return
 
     if args.list_sidelights:
-        for cls in ALL_SIDELIGHTS:
-            print(cls().name)
+        plugin_classes = discover_sidelights(config_dir) if config_dir else discover_sidelights()
+        for cls in list(ALL_SIDELIGHTS) + plugin_classes:
+            print(cls.name)
         return
 
     if args.list_audio:
@@ -469,6 +516,7 @@ def main():
         device_filter=args.keyboard,
         effect=args.effect,
         sidelight=None if args.no_sidelight else args.sidelight,
+        config_dir=config_dir,
     )
 
 
