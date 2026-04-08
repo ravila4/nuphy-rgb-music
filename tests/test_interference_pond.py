@@ -20,6 +20,7 @@ def _make_frame(**kwargs) -> AudioFrame:
         timestamp=0.0,
     )
     defaults.update(kwargs)
+    defaults.setdefault("raw_rms", defaults["rms"])
     return AudioFrame(**defaults)
 
 

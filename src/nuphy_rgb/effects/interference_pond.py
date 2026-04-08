@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from nuphy_rgb.audio import AudioFrame
+from nuphy_rgb.audio import AudioFrame, ExpFilter
 from nuphy_rgb.effects.grid import LED_X, LED_Y, NUM_LEDS
 from nuphy_rgb.visualizer import freq_to_hue
 
@@ -46,6 +46,7 @@ class InterferencePond:
         self._last_timestamp: float | None = None
         self._peak_wave: float = 0.01
         self._rng = np.random.default_rng(42)
+        self._brightness_filter = ExpFilter(alpha_rise=0.9, alpha_decay=0.3)
 
     # ------------------------------------------------------------------
     # Public interface
@@ -132,8 +133,10 @@ class InterferencePond:
         self._peak_wave = max(peak, self._peak_wave * 0.98, 1e-6)
         norm_wave = wave_sum / self._peak_wave
 
-        # RMS-scaled brightness
-        brightness_arr = np.abs(norm_wave) * min(1.0, frame.rms * 2.0)
+        # Brightness from raw RMS with squared curve for dynamic range
+        scaled = min(frame.raw_rms * 3.0, 1.0)
+        brightness_scale = self._brightness_filter.update(scaled ** 2)
+        brightness_arr = np.abs(norm_wave) * brightness_scale
 
         # Blended hue via circular mean
         blended_angle = np.arctan2(sin_weighted, cos_weighted)
