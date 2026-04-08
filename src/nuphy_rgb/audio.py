@@ -34,7 +34,6 @@ class AudioFrame:
     mid_beat: bool = False
     high_beat: bool = False
     spectrum: tuple[float, ...] = (0.0,) * NUM_SPECTRUM_BINS
-    spectral_centroid: float = 0.0
 
 
 class ExpFilter:
@@ -119,16 +118,6 @@ def compute_spectrum_bins(
     return result
 
 
-def compute_spectral_centroid(magnitudes: np.ndarray, freqs: np.ndarray) -> float:
-    """Weighted average frequency — the 'center of mass' of the spectrum.
-
-    Returns 0.0 on silence.
-    """
-    total = np.sum(magnitudes)
-    if total < 1e-10:
-        return 0.0
-    return float(np.sum(magnitudes * freqs) / total)
-
 
 def compute_onset_strength(rms: float, prev_rms: float) -> float:
     """Onset strength as positive RMS delta. Zero on steady or declining signal."""
@@ -152,7 +141,7 @@ class BeatDetector:
 
     def update(self, bass_energy: float) -> bool:
         """Feed bass energy for this frame. Returns True on beat onset."""
-        if len(self._history) < self._history.maxlen:
+        if self._history.maxlen is not None and len(self._history) < self._history.maxlen:
             self._history.append(bass_energy)
             return False
 
@@ -277,7 +266,6 @@ class AudioCapture:
         highs = self._high_filter.update(raw_highs * scale)
 
         dominant_freq = compute_dominant_freq(magnitudes, self._freqs)
-        spectral_centroid = compute_spectral_centroid(magnitudes, self._freqs)
         raw_rms = float(np.sqrt(np.mean(chunk**2)))
         self._peak_rms = max(raw_rms, self._peak_rms * 0.995)
         rms = self._rms_filter.update(raw_rms / (self._peak_rms + 1e-10))
@@ -323,5 +311,4 @@ class AudioCapture:
             mid_beat=mid_beat,
             high_beat=high_beat,
             spectrum=spectrum,
-            spectral_centroid=spectral_centroid,
         )

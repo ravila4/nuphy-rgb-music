@@ -9,7 +9,6 @@ from nuphy_rgb.audio import (
     compute_band_energies,
     compute_dominant_freq,
     compute_onset_strength,
-    compute_spectral_centroid,
     compute_spectral_flux,
     compute_spectrum_bins,
 )
@@ -278,32 +277,6 @@ class TestComputeSpectrumBins:
         for n in (8, 16, 32):
             bins = compute_spectrum_bins(mags, freqs, num_bins=n)
             assert len(bins) == n
-
-
-class TestComputeSpectralCentroid:
-    def test_bass_tone_has_low_centroid(self):
-        mags, freqs = _make_sine_fft(80.0)
-        centroid = compute_spectral_centroid(mags, freqs)
-        assert centroid < 200.0
-
-    def test_high_tone_has_high_centroid(self):
-        mags, freqs = _make_sine_fft(8000.0)
-        centroid = compute_spectral_centroid(mags, freqs)
-        assert centroid > 4000.0
-
-    def test_silence_returns_zero(self):
-        mags, freqs = _make_silence_fft()
-        centroid = compute_spectral_centroid(mags, freqs)
-        assert centroid == 0.0
-
-    def test_returns_float(self):
-        mags, freqs = _make_sine_fft(440.0)
-        assert isinstance(compute_spectral_centroid(mags, freqs), float)
-
-    def test_higher_tone_gives_higher_centroid(self):
-        mags_low, freqs = _make_sine_fft(200.0)
-        mags_high, _ = _make_sine_fft(4000.0)
-        assert compute_spectral_centroid(mags_high, freqs) > compute_spectral_centroid(mags_low, freqs)
 
 
 class TestAudioFrame:
