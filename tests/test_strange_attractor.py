@@ -1,23 +1,15 @@
 """Tests for the StrangeAttractor visualizer effect."""
 
-import time
-
 import numpy as np
 import pytest
 
-from nuphy_rgb.audio import AudioFrame
 from nuphy_rgb.effects.strange_attractor import StrangeAttractor, _lorenz_step, _project
 
+from nuphy_rgb.audio import AudioFrame
+
+from helpers import make_frame
+
 NUM_LEDS = 84
-
-
-def _make_frame(**kwargs) -> AudioFrame:
-    defaults = dict(
-        bass=0.0, mids=0.0, highs=0.0,
-        dominant_freq=0.0, rms=0.0, is_beat=False, timestamp=0.0,
-    )
-    defaults.update(kwargs)
-    return AudioFrame(**defaults)
 
 
 def _loud_frame(**kwargs) -> AudioFrame:
@@ -26,7 +18,7 @@ def _loud_frame(**kwargs) -> AudioFrame:
         dominant_freq=440.0, rms=0.9, is_beat=False, timestamp=0.0,
     )
     defaults.update(kwargs)
-    return AudioFrame(**defaults)
+    return make_frame(**defaults)
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +28,7 @@ def _loud_frame(**kwargs) -> AudioFrame:
 class TestInterface:
     def test_returns_84_tuples(self):
         viz = StrangeAttractor(seed=0)
-        colors = viz.render(_make_frame())
+        colors = viz.render(make_frame())
         assert len(colors) == NUM_LEDS
         assert all(len(c) == 3 for c in colors)
 
@@ -116,7 +108,7 @@ class TestAudioResponse:
     def test_silence_produces_dim_output(self):
         """After 50 silent frames, total brightness should be very low."""
         viz = StrangeAttractor(seed=0)
-        silent = _make_frame()
+        silent = make_frame()
         for _ in range(50):
             colors = viz.render(silent)
         total_silent = sum(max(r, g, b) for r, g, b in colors)
@@ -124,7 +116,7 @@ class TestAudioResponse:
         # (attractor still moves, depositing trails at steady-state)
         # Compare against a loud run to verify silence is dimmer
         viz2 = StrangeAttractor(seed=0)
-        loud = _make_frame(bass=0.8, mids=0.5, highs=0.3, rms=0.9)
+        loud = make_frame(bass=0.8, mids=0.5, highs=0.3, rms=0.9)
         for _ in range(50):
             colors2 = viz2.render(loud)
         total_loud = sum(max(r, g, b) for r, g, b in colors2)
@@ -148,13 +140,13 @@ class TestAudioResponse:
 
         # Warm up identically
         for _ in range(10):
-            viz_beat.render(_make_frame())
-            viz_nobeat.render(_make_frame())
+            viz_beat.render(make_frame())
+            viz_nobeat.render(make_frame())
 
         particles_before = viz_beat._particles.copy()
 
-        viz_beat.render(_make_frame(is_beat=True))
-        viz_nobeat.render(_make_frame(is_beat=False))
+        viz_beat.render(make_frame(is_beat=True))
+        viz_nobeat.render(make_frame(is_beat=False))
 
         # After a beat, particles should differ from the no-beat path
         # (beat adds a kick offset)
@@ -175,13 +167,13 @@ class TestNewAudioFields:
 
         # Warm up identically
         for _ in range(10):
-            viz_low.render(_make_frame())
-            viz_high.render(_make_frame())
+            viz_low.render(make_frame())
+            viz_high.render(make_frame())
 
         pre = viz_low._particles.copy()
 
-        viz_low.render(_make_frame(is_beat=True, onset_strength=0.0))
-        viz_high.render(_make_frame(is_beat=True, onset_strength=1.0))
+        viz_low.render(make_frame(is_beat=True, onset_strength=0.0))
+        viz_high.render(make_frame(is_beat=True, onset_strength=1.0))
 
         # Both should differ from pre-beat (both got beat=True)
         diff_low = np.abs(viz_low._particles - pre).sum()
@@ -195,15 +187,15 @@ class TestNewAudioFields:
 
         # Warm up identically
         for _ in range(5):
-            viz_calm.render(_make_frame(rms=0.5))
-            viz_flux.render(_make_frame(rms=0.5))
+            viz_calm.render(make_frame(rms=0.5))
+            viz_flux.render(make_frame(rms=0.5))
 
         pre = viz_calm._particles.copy()
 
         # Run 20 frames with different flux
         for _ in range(20):
-            viz_calm.render(_make_frame(rms=0.5, spectral_flux=0.0))
-            viz_flux.render(_make_frame(rms=0.5, spectral_flux=0.9))
+            viz_calm.render(make_frame(rms=0.5, spectral_flux=0.0))
+            viz_flux.render(make_frame(rms=0.5, spectral_flux=0.9))
 
         diff_calm = np.abs(viz_calm._particles - pre).sum()
         diff_flux = np.abs(viz_flux._particles - pre).sum()
@@ -212,10 +204,10 @@ class TestNewAudioFields:
     def test_mid_beat_rotates_hues(self):
         """mid_beat=True should shift particle hues by 0.08."""
         viz = StrangeAttractor(seed=7)
-        viz.render(_make_frame())  # initialize
+        viz.render(make_frame())  # initialize
         hues_before = viz._particle_hues.copy()
 
-        viz.render(_make_frame(mid_beat=True))
+        viz.render(make_frame(mid_beat=True))
         expected = (hues_before + 0.08) % 1.0
         np.testing.assert_allclose(viz._particle_hues, expected, atol=1e-9)
 
@@ -225,13 +217,13 @@ class TestNewAudioFields:
         viz2 = StrangeAttractor(seed=42)
 
         frames = [
-            _make_frame(bass=0.3, mids=0.2, rms=0.4),
+            make_frame(bass=0.3, mids=0.2, rms=0.4),
             _loud_frame(),
-            _make_frame(is_beat=True),
+            make_frame(is_beat=True),
         ]
         for f in frames:
             # Explicitly pass defaults for new fields
-            f2 = _make_frame(
+            f2 = make_frame(
                 bass=f.bass, mids=f.mids, highs=f.highs,
                 dominant_freq=f.dominant_freq, rms=f.rms, is_beat=f.is_beat,
                 onset_strength=0.0, spectral_flux=0.0,
@@ -246,9 +238,9 @@ class TestDeterminism:
     def test_deterministic_with_seed(self):
         """Same seed + same frames => identical output."""
         frames = [
-            _make_frame(bass=0.3, mids=0.2, rms=0.4),
+            make_frame(bass=0.3, mids=0.2, rms=0.4),
             _loud_frame(),
-            _make_frame(is_beat=True),
+            make_frame(is_beat=True),
         ]
         viz1 = StrangeAttractor(seed=123)
         viz2 = StrangeAttractor(seed=123)
@@ -270,7 +262,7 @@ class TestTrailDecay:
 
         # Let silence decay them
         for _ in range(30):
-            viz.render(_make_frame())
+            viz.render(make_frame())
         trail_after_silence = viz._trails.copy()
 
         assert np.sum(trail_after_silence) < np.sum(trail_after_loud), (
@@ -288,7 +280,7 @@ class TestNumericalStability:
         rng = np.random.default_rng(99)
         viz = StrangeAttractor(seed=99)
         for _ in range(200):
-            frame = _make_frame(
+            frame = make_frame(
                 bass=float(rng.random()),
                 mids=float(rng.random()),
                 highs=float(rng.random()),
@@ -306,7 +298,7 @@ class TestNumericalStability:
     def test_extreme_audio_values(self):
         """All audio bands at maximum (1.0) for 100 frames must not crash or produce invalid RGB."""
         viz = StrangeAttractor(seed=42)
-        extreme = _make_frame(bass=1.0, mids=1.0, highs=1.0, rms=1.0)
+        extreme = make_frame(bass=1.0, mids=1.0, highs=1.0, rms=1.0)
         for _ in range(100):
             colors = viz.render(extreme)
         for r, g, b in colors:

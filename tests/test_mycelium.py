@@ -2,34 +2,23 @@
 
 import pytest
 
-from nuphy_rgb.audio import AudioFrame
 from nuphy_rgb.effects.mycelium import Mycelium
+
+from nuphy_rgb.audio import AudioFrame
+
+from helpers import make_frame
 
 NUM_LEDS = 84
 
 
-def _make_frame(**kwargs) -> AudioFrame:
-    defaults = dict(
-        bass=0.0,
-        mids=0.0,
-        highs=0.0,
-        dominant_freq=0.0,
-        rms=0.0,
-        is_beat=False,
-        timestamp=0.0,
-    )
-    defaults.update(kwargs)
-    return AudioFrame(**defaults)
-
-
 def _silence() -> AudioFrame:
-    return _make_frame()
+    return make_frame()
 
 
 def _beat_frame(**kwargs) -> AudioFrame:
     defaults = dict(is_beat=True, rms=0.8)
     defaults.update(kwargs)
-    return _make_frame(**defaults)
+    return make_frame(**defaults)
 
 
 class TestBasicContract:
@@ -43,7 +32,7 @@ class TestBasicContract:
         viz = Mycelium(seed=42)
         for _ in range(10):
             viz.render(_beat_frame())
-        colors = viz.render(_make_frame(rms=0.5))
+        colors = viz.render(make_frame(rms=0.5))
         for r, g, b in colors:
             assert 0 <= r <= 255
             assert 0 <= g <= 255
@@ -245,8 +234,8 @@ class TestNewAudioFields:
 
         # Now run several frames with different flux
         for _ in range(10):
-            viz_calm.render(_make_frame(rms=0.3, spectral_flux=0.0))
-            viz_flux.render(_make_frame(rms=0.3, spectral_flux=0.9))
+            viz_calm.render(make_frame(rms=0.3, spectral_flux=0.0))
+            viz_flux.render(make_frame(rms=0.3, spectral_flux=0.9))
 
         # High flux should have less glow remaining
         assert np.sum(viz_flux._glow) < np.sum(viz_calm._glow), (
