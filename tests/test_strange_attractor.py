@@ -167,6 +167,81 @@ class TestAudioResponse:
 # Determinism and stability
 # ---------------------------------------------------------------------------
 
+class TestNewAudioFields:
+    def test_onset_strength_scales_kick(self):
+        """Higher onset_strength should produce larger particle displacement on beat."""
+        viz_low = StrangeAttractor(seed=7)
+        viz_high = StrangeAttractor(seed=7)
+
+        # Warm up identically
+        for _ in range(10):
+            viz_low.render(_make_frame())
+            viz_high.render(_make_frame())
+
+        pre = viz_low._particles.copy()
+
+        viz_low.render(_make_frame(is_beat=True, onset_strength=0.0))
+        viz_high.render(_make_frame(is_beat=True, onset_strength=1.0))
+
+        # Both should differ from pre-beat (both got beat=True)
+        diff_low = np.abs(viz_low._particles - pre).sum()
+        diff_high = np.abs(viz_high._particles - pre).sum()
+        assert diff_high > diff_low, "Higher onset should produce larger kick"
+
+    def test_spectral_flux_affects_speed(self):
+        """High spectral_flux should move particles faster (larger dt)."""
+        viz_calm = StrangeAttractor(seed=7)
+        viz_flux = StrangeAttractor(seed=7)
+
+        # Warm up identically
+        for _ in range(5):
+            viz_calm.render(_make_frame(rms=0.5))
+            viz_flux.render(_make_frame(rms=0.5))
+
+        pre = viz_calm._particles.copy()
+
+        # Run 20 frames with different flux
+        for _ in range(20):
+            viz_calm.render(_make_frame(rms=0.5, spectral_flux=0.0))
+            viz_flux.render(_make_frame(rms=0.5, spectral_flux=0.9))
+
+        diff_calm = np.abs(viz_calm._particles - pre).sum()
+        diff_flux = np.abs(viz_flux._particles - pre).sum()
+        assert diff_flux > diff_calm, "Spectral flux should increase particle movement"
+
+    def test_mid_beat_rotates_hues(self):
+        """mid_beat=True should shift particle hues by 0.08."""
+        viz = StrangeAttractor(seed=7)
+        viz.render(_make_frame())  # initialize
+        hues_before = viz._particle_hues.copy()
+
+        viz.render(_make_frame(mid_beat=True))
+        expected = (hues_before + 0.08) % 1.0
+        np.testing.assert_allclose(viz._particle_hues, expected, atol=1e-9)
+
+    def test_default_fields_match_old_behavior(self):
+        """With new fields at defaults, output should be identical to before."""
+        viz1 = StrangeAttractor(seed=42)
+        viz2 = StrangeAttractor(seed=42)
+
+        frames = [
+            _make_frame(bass=0.3, mids=0.2, rms=0.4),
+            _loud_frame(),
+            _make_frame(is_beat=True),
+        ]
+        for f in frames:
+            # Explicitly pass defaults for new fields
+            f2 = _make_frame(
+                bass=f.bass, mids=f.mids, highs=f.highs,
+                dominant_freq=f.dominant_freq, rms=f.rms, is_beat=f.is_beat,
+                onset_strength=0.0, spectral_flux=0.0,
+                mid_beat=False, high_beat=False,
+            )
+            out1 = viz1.render(f)
+            out2 = viz2.render(f2)
+            assert out1 == out2
+
+
 class TestDeterminism:
     def test_deterministic_with_seed(self):
         """Same seed + same frames => identical output."""

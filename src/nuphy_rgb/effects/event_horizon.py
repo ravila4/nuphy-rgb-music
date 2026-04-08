@@ -66,6 +66,9 @@ class EventHorizon:
         self._collapse_frames: int = 0
         self._collapse_intensity: float = 0.0
 
+        # Spiral arm boost on high-beat (3-frame counter)
+        self._spiral_frames: int = 0
+
         # Particles
         self._particles: list[_Particle] = []
 
@@ -101,7 +104,7 @@ class EventHorizon:
         # ---- 3. Collapse trigger / decay ------------------------------------
         if frame.is_beat:
             self._collapse_frames = 12
-            self._collapse_intensity = 1.0
+            self._collapse_intensity = 1.0 + min(frame.onset_strength * 0.5, 0.5)
         else:
             if self._collapse_frames > 0:
                 self._collapse_frames -= 1
@@ -109,30 +112,37 @@ class EventHorizon:
 
         collapsing = self._collapse_intensity > 0.01
 
-        # ---- 4. Particles ---------------------------------------------------
+        # ---- 4. High-beat spiral arm boost -----------------------------------
+        if frame.high_beat:
+            self._spiral_frames = 3
+        elif self._spiral_frames > 0:
+            self._spiral_frames -= 1
+
+        # ---- 5. Particles ---------------------------------------------------
         if frame.is_beat:
             self._spawn_particles(sx, sy, frame.dominant_freq)
-        self._update_particles(sx, sy)
+        self._update_particles(sx, sy, frame.spectral_flux)
 
-        # ---- 5. Per-LED vectorised computation ------------------------------
+        # ---- 6. Per-LED vectorised computation ------------------------------
         dx = self._led_x - sx
         dy = self._led_y - sy
         dist = np.hypot(dx, dy)           # raw distance
         norm_dist = dist / 0.6            # normalise; 0.6 ~ half diagonal
         angle = np.arctan2(dy, dx)        # [-pi, pi]
 
-        # ---- 6. Normal-mode brightness --------------------------------------
+        # ---- 7. Normal-mode brightness --------------------------------------
         # Glowing ring at norm_dist ~ 0.3
         ring_b = np.exp(-((norm_dist - 0.3) ** 2) * 30.0)
-        # Spiral arm modulation
+        # Spiral arm modulation (extra arms on high-beat)
+        spiral_arms = 2.0 + 4.0 * (self._spiral_frames > 0)
         spiral = 0.5 + 0.5 * np.sin(
-            2.0 * angle - self._disk_rotation + norm_dist * 6.0
+            spiral_arms * angle - self._disk_rotation + norm_dist * 6.0
         )
         brightness = ring_b * spiral
         # Void centre: LEDs very close to singularity are dark
         brightness = np.where(norm_dist < 0.08, 0.0, brightness)
 
-        # ---- 7. Distance-based hue -----------------------------------------
+        # ---- 8. Distance-based hue -----------------------------------------
         effective_freq = max(frame.dominant_freq, 80.0)
         freq_shift = freq_to_hue(effective_freq, min_freq=80.0, max_freq=4000.0)
         # violet inner (<0.25), blue-white ring, amber outer
@@ -149,7 +159,7 @@ class EventHorizon:
         # Blue-white ring: lower saturation for whitish glow
         saturation[ring_mask] = 0.4 + ring_b[ring_mask] * 0.3
 
-        # ---- 8. Collapse override -------------------------------------------
+        # ---- 9. Collapse override -------------------------------------------
         if collapsing:
             ci = self._collapse_intensity
             collapse_b = np.exp(-norm_dist * 4.0) * ci
@@ -157,7 +167,7 @@ class EventHorizon:
             hue = hue * (1.0 - ci) + 0.0 * ci   # shift toward red (hue=0)
             saturation = saturation * (1.0 - ci) + 1.0 * ci
 
-        # ---- 9. Particle overlay --------------------------------------------
+        # ---- 10. Particle overlay -------------------------------------------
         for p in self._particles:
             pdx = self._led_x - p.x
             pdy = self._led_y - p.y
@@ -168,7 +178,7 @@ class EventHorizon:
             blend = np.clip(particle_b * 5.0, 0.0, 1.0)
             hue = hue * (1.0 - blend) + p.hue * blend
 
-        # ---- 10. Global brightness scale ------------------------------------
+        # ---- 11. Global brightness scale ------------------------------------
         global_brightness = self._brightness_filter.update(frame.rms ** 2)
         # Keep a baseline so the effect is visible even in silence
         global_brightness = max(global_brightness, 0.05)
@@ -176,7 +186,7 @@ class EventHorizon:
         saturation = np.clip(saturation, 0.0, 1.0)
         hue = np.clip(hue, 0.0, 1.0)
 
-        # ---- 11. HSV -> RGB -------------------------------------------------
+        # ---- 12. HSV -> RGB -------------------------------------------------
         result: list[tuple[int, int, int]] = []
         for i in range(self._num_leds):
             r_f, g_f, b_f = colorsys.hsv_to_rgb(
@@ -204,9 +214,12 @@ class EventHorizon:
             life = int(self._rng.integers(15, 25))
             self._particles.append(_Particle(x=px, y=py, life=life, hue=p_hue))
 
-    def _update_particles(self, sx: float, sy: float) -> None:
+    def _update_particles(
+        self, sx: float, sy: float, spectral_flux: float
+    ) -> None:
         """Pull each particle toward (sx, sy) and decrement life."""
         pull = 0.04
+        turbulence = spectral_flux * 0.03
         live: list[_Particle] = []
         for p in self._particles:
             p.life -= 1
@@ -215,5 +228,9 @@ class EventHorizon:
             # Pull toward singularity
             p.x += (sx - p.x) * pull
             p.y += (sy - p.y) * pull
+            # Spectral-flux turbulence
+            if turbulence > 0:
+                p.x += float(self._rng.uniform(-turbulence, turbulence))
+                p.y += float(self._rng.uniform(-turbulence, turbulence))
             live.append(p)
         self._particles = live

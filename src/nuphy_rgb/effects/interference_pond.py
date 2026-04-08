@@ -76,13 +76,14 @@ class InterferencePond:
     def _spawn_ripple(self, frame: AudioFrame) -> None:
         hue = freq_to_hue(frame.dominant_freq)
         wavelength = 0.15 + 0.1 * frame.bass
+        amplitude = 1.0 + min(frame.onset_strength * 0.3, 0.3)
         cx = float(self._rng.uniform(0.0, 1.0))
         cy = float(self._rng.uniform(0.0, 1.0))
         ripple = _Ripple(
             cx=cx,
             cy=cy,
             hue=hue,
-            amplitude=1.0,
+            amplitude=amplitude,
             radius=0.0,
             wavelength=wavelength,
         )

@@ -107,16 +107,21 @@ class StrangeAttractor:
         sigma = 8.0 + bass * 8.0
         rho = 20.0 + mids * 16.0
         beta = 2.0 + highs * 2.0
-        dt = 0.003 + highs * 0.004
+        dt = 0.003 + highs * 0.003 + frame.spectral_flux * 0.003
 
         self._particles = _lorenz_step(
             self._particles, sigma, rho, beta, dt, substeps=3
         )
 
-        # --- Beat kick ---
+        # --- Beat kick (onset-scaled) ---
         if frame.is_beat:
-            self._particles += self._rng.choice([-3.0, 3.0], size=(1, 3))
+            kick = 3.0 + min(frame.onset_strength * 3.0, 3.0)
+            self._particles += self._rng.choice([-kick, kick], size=(1, 3))
             np.clip(self._particles, -100.0, 100.0, out=self._particles)
+
+        # --- Mid-beat hue rotation ---
+        if frame.mid_beat:
+            self._particle_hues = (self._particle_hues + 0.08) % 1.0
 
         # --- Project to 2D grid ---
         gx, gy = _project(self._particles)  # each shape (12,)

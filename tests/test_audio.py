@@ -8,6 +8,8 @@ from nuphy_rgb.audio import (
     ExpFilter,
     compute_band_energies,
     compute_dominant_freq,
+    compute_onset_strength,
+    compute_spectral_flux,
 )
 
 SAMPLE_RATE = 48000
@@ -152,11 +154,93 @@ class TestExpFilter:
         assert abs(filt.value - 0.5) < 0.01
 
 
+class TestComputeSpectralFlux:
+    def test_zero_on_identical_spectra(self):
+        mags = np.ones(100)
+        assert compute_spectral_flux(mags, mags) == 0.0
+
+    def test_positive_on_increasing_spectrum(self):
+        prev = np.zeros(100)
+        curr = np.ones(100)
+        flux = compute_spectral_flux(curr, prev)
+        assert flux > 0.0
+
+    def test_zero_on_decreasing_spectrum(self):
+        """Only positive changes count (half-wave rectification)."""
+        prev = np.ones(100)
+        curr = np.zeros(100)
+        assert compute_spectral_flux(curr, prev) == 0.0
+
+    def test_partial_increase(self):
+        """Only bins that increased contribute."""
+        prev = np.array([1.0, 1.0, 0.0, 0.0])
+        curr = np.array([0.0, 0.0, 1.0, 1.0])
+        flux = compute_spectral_flux(curr, prev)
+        # Two bins increased by 1.0 each, two decreased — only increases count
+        assert flux > 0.0
+
+    def test_returns_float(self):
+        mags = np.ones(50)
+        assert isinstance(compute_spectral_flux(mags, mags), float)
+
+
+class TestComputeOnsetStrength:
+    def test_zero_on_steady_rms(self):
+        assert compute_onset_strength(0.5, 0.5) == 0.0
+
+    def test_positive_on_rms_jump(self):
+        strength = compute_onset_strength(0.8, 0.2)
+        assert strength > 0.0
+
+    def test_zero_on_rms_decrease(self):
+        assert compute_onset_strength(0.2, 0.8) == 0.0
+
+    def test_larger_jump_gives_higher_strength(self):
+        small = compute_onset_strength(0.3, 0.2)
+        large = compute_onset_strength(0.9, 0.2)
+        assert large > small
+
+    def test_returns_float(self):
+        assert isinstance(compute_onset_strength(0.5, 0.3), float)
+
+
+class TestMultiBandBeatDetector:
+    """BeatDetector already works for bass — verify it works independently for mids/highs."""
+
+    def test_mid_beat_on_mid_spike(self):
+        bd = BeatDetector(history_len=10, threshold=1.5)
+        for _ in range(10):
+            bd.update(1.0)
+        assert bd.update(5.0) is True
+
+    def test_independent_detectors_dont_interfere(self):
+        bass_bd = BeatDetector(history_len=10, threshold=1.5)
+        mid_bd = BeatDetector(history_len=10, threshold=1.5)
+        # Fill both with steady energy
+        for _ in range(10):
+            bass_bd.update(1.0)
+            mid_bd.update(1.0)
+        # Spike bass only
+        assert bass_bd.update(5.0) is True
+        assert mid_bd.update(1.0) is False  # mids stayed steady
+
+    def test_high_beat_with_different_refractory(self):
+        bd = BeatDetector(history_len=10, threshold=1.5, refractory_frames=2)
+        for _ in range(10):
+            bd.update(1.0)
+        assert bd.update(5.0) is True
+        bd.update(1.0)
+        bd.update(1.0)
+        # After shorter refractory, should fire again
+        assert bd.update(5.0) is True
+
+
 class TestAudioFrame:
     def test_is_frozen(self):
         frame = AudioFrame(
             bass=0.5, mids=0.3, highs=0.1,
             dominant_freq=100.0, rms=0.4, is_beat=False, timestamp=0.0,
+            onset_strength=0.0, spectral_flux=0.0, mid_beat=False, high_beat=False,
         )
         with pytest.raises(AttributeError):
             frame.bass = 0.9
@@ -184,6 +268,11 @@ class TestAudioCapture:
         assert isinstance(frame, AudioFrame)
         assert frame.bass > 0
         assert frame.rms > 0
+        # New fields exist and are typed correctly
+        assert isinstance(frame.onset_strength, float)
+        assert isinstance(frame.spectral_flux, float)
+        assert isinstance(frame.mid_beat, bool)
+        assert isinstance(frame.high_beat, bool)
 
     def test_process_latest_keeps_only_latest(self):
         cap = self._make_capture()
@@ -198,6 +287,63 @@ class TestAudioCapture:
         assert frame is not None
         # The ring buffer should contain the loud signal in its latest half
         assert frame.rms > 0
+
+    def test_spectral_flux_nonzero_on_spectrum_change(self):
+        cap = self._make_capture()
+        t = np.arange(1024) / SAMPLE_RATE
+        # First frame: silence to fill ring buffer
+        silence = np.zeros(1024, dtype=np.float32)
+        cap._queue.put_nowait(silence)
+        cap.process_latest()  # establishes prev_magnitudes
+        # Second frame: loud sine — spectrum changes dramatically
+        loud = np.sin(2 * np.pi * 440.0 * t).astype(np.float32)
+        cap._queue.put_nowait(loud)
+        frame = cap.process_latest()
+        assert frame is not None
+        assert frame.spectral_flux > 0.0
+
+    def test_onset_strength_on_sudden_loudness(self):
+        cap = self._make_capture()
+        t = np.arange(1024) / SAMPLE_RATE
+        silence = np.zeros(1024, dtype=np.float32)
+        loud = (0.8 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+        # Frame 1: silence
+        cap._queue.put_nowait(silence)
+        cap.process_latest()
+        # Frame 2: first onset — cold start suppressed
+        cap._queue.put_nowait(loud)
+        cap.process_latest()
+        # Frame 3: silence (RMS drops)
+        cap._queue.put_nowait(silence)
+        cap.process_latest()
+        # Frame 4: second onset — AGC established, should be positive
+        cap._queue.put_nowait(loud)
+        frame = cap.process_latest()
+        assert frame is not None
+        assert frame.onset_strength > 0.0
+
+    def test_onset_strength_is_agc_normalized(self):
+        """onset_strength should be AGC-normalized to [0, 1] range."""
+        cap = self._make_capture()
+        t = np.arange(1024) / SAMPLE_RATE
+        # Frame 1: silence
+        silence = np.zeros(1024, dtype=np.float32)
+        cap._queue.put_nowait(silence)
+        cap.process_latest()
+        # Frame 2: first onset — cold start, should be suppressed to 0.0
+        loud = (0.8 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+        cap._queue.put_nowait(loud)
+        frame = cap.process_latest()
+        assert frame is not None
+        assert frame.onset_strength == 0.0, "First onset should be suppressed (cold start)"
+        # Frame 3: silence again (RMS drops — onset is 0)
+        cap._queue.put_nowait(silence)
+        cap.process_latest()
+        # Frame 4: second loud onset — AGC peak is established, should normalize
+        cap._queue.put_nowait(loud)
+        frame2 = cap.process_latest()
+        assert frame2 is not None
+        assert 0.0 < frame2.onset_strength <= 1.0
 
     def test_ring_buffer_accumulates(self):
         cap = self._make_capture()

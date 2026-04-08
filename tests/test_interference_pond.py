@@ -144,6 +144,19 @@ class TestOutput:
         assert rgb_bass != rgb_treble
 
 
+class TestNewAudioFields:
+    def test_onset_strength_scales_ripple_amplitude(self):
+        """Higher onset_strength should produce larger bass ripple amplitude."""
+        viz_low = InterferencePond()
+        viz_high = InterferencePond()
+
+        viz_low.render(_make_frame(is_beat=True, onset_strength=0.0, rms=0.5, timestamp=0.0))
+        viz_high.render(_make_frame(is_beat=True, onset_strength=1.0, rms=0.5, timestamp=0.0))
+
+        # Both have been decayed by _update_ripples, but the ratio should hold
+        assert viz_high._ripples[0].amplitude > viz_low._ripples[0].amplitude
+
+
 class TestSparkle:
     def test_high_highs_add_sparkle(self):
         """With extreme highs energy, some LEDs should have zero saturation (sparkle)."""

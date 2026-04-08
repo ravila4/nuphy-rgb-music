@@ -82,7 +82,8 @@ class Mycelium:
         if not unoccupied:
             return
 
-        count = self._rng.randint(2, 5)
+        bonus = min(int(frame.onset_strength * 5), 3)
+        count = self._rng.randint(2, 5) + bonus
         slots = self._max_tendrils - len(self._tendrils)
         count = min(count, slots, len(unoccupied))
 
@@ -105,8 +106,9 @@ class Mycelium:
         # 1. Smooth RMS
         rms = self._rms_filter.update(frame.rms)
 
-        # 2. Decay glow (slower decay = longer-lasting trails)
-        self._glow *= 0.93
+        # 2. Decay glow (modulated by spectral flux — faster decay during busy passages)
+        decay = 0.93 - frame.spectral_flux * 0.05
+        self._glow *= decay
 
         # 3. Phosphorescent base: keep a minimum green floor
         self._glow[:, :, 1] = np.maximum(self._glow[:, :, 1], 0.02)
@@ -164,6 +166,34 @@ class Mycelium:
                     )
                     self._occupied.add((fr, fc))
                     forks.append(fork)
+
+        # Mid-beat fork burst: snapshot positions and spawn extra forks
+        if frame.mid_beat:
+            snapshot_occupied = (
+                {(t.row, t.col) for t in self._tendrils if t.alive}
+                | {(f.row, f.col) for f in forks}
+            )
+            mid_forks: list[_Tendril] = []
+            for t in self._tendrils:
+                if not t.alive:
+                    continue
+                if len(self._tendrils) + len(forks) + len(mid_forks) >= self._max_tendrils:
+                    break
+                nbrs = NEIGHBORS.get((t.row, t.col), [])
+                free_nbrs = [n for n in nbrs if n not in snapshot_occupied]
+                if free_nbrs:
+                    fr, fc = self._rng.choice(free_nbrs)
+                    fork = _Tendril(
+                        row=fr,
+                        col=fc,
+                        hue=(t.hue + self._rng.choice([-0.05, 0.05])) % 1.0,
+                        energy=t.energy * 0.6,
+                        age=0,
+                        max_age=self._rng.randint(6, 12),
+                    )
+                    snapshot_occupied.add((fr, fc))
+                    mid_forks.append(fork)
+            forks.extend(mid_forks)
 
         # Collect forks after the loop to avoid mutating list during iteration
         self._tendrils.extend(forks)

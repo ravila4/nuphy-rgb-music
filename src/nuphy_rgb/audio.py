@@ -25,6 +25,10 @@ class AudioFrame:
     rms: float
     is_beat: bool
     timestamp: float
+    onset_strength: float = 0.0
+    spectral_flux: float = 0.0
+    mid_beat: bool = False
+    high_beat: bool = False
 
 
 class ExpFilter:
@@ -70,6 +74,24 @@ def compute_dominant_freq(magnitudes: np.ndarray, freqs: np.ndarray) -> float:
     if np.max(magnitudes) < 1e-6:
         return 0.0
     return float(freqs[np.argmax(magnitudes)])
+
+
+def compute_spectral_flux(
+    magnitudes: np.ndarray, prev_magnitudes: np.ndarray
+) -> float:
+    """Half-wave rectified spectral flux: sum of positive magnitude changes.
+
+    Only increases count — decreasing bins are ignored. This captures
+    the onset of new spectral energy (new notes, percussive hits).
+    """
+    diff = magnitudes - prev_magnitudes
+    return float(np.sum(np.maximum(diff, 0.0)))
+
+
+def compute_onset_strength(rms: float, prev_rms: float) -> float:
+    """Onset strength as positive RMS delta. Zero on steady or declining signal."""
+    delta = rms - prev_rms
+    return max(delta, 0.0)
 
 
 class BeatDetector:
@@ -136,6 +158,12 @@ class AudioCapture:
         self._window = np.hanning(fft_size).astype(np.float32)
         self._freqs = np.fft.rfftfreq(fft_size, 1.0 / sample_rate)
         self._beat_detector = BeatDetector()
+        self._mid_beat_detector = BeatDetector()
+        self._high_beat_detector = BeatDetector()
+        self._prev_magnitudes: np.ndarray | None = None
+        self._prev_rms: float = 0.0
+        self._peak_flux: float = 0.0
+        self._peak_onset: float = 0.0
         self._bass_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
         self._mid_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
         self._high_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
@@ -211,6 +239,28 @@ class AudioCapture:
         self._peak_rms = max(raw_rms, self._peak_rms * 0.995)
         rms = self._rms_filter.update(raw_rms / (self._peak_rms + 1e-10))
         is_beat = self._beat_detector.update(raw_bass)
+        mid_beat = self._mid_beat_detector.update(raw_mids)
+        high_beat = self._high_beat_detector.update(raw_highs)
+
+        # Spectral flux (AGC-normalized like band energies)
+        if self._prev_magnitudes is not None:
+            raw_flux = compute_spectral_flux(magnitudes, self._prev_magnitudes)
+            self._peak_flux = max(raw_flux, self._peak_flux * 0.995)
+            spectral_flux = raw_flux / (self._peak_flux + 1e-10)
+        else:
+            spectral_flux = 0.0
+        self._prev_magnitudes = magnitudes.copy()
+
+        # Onset strength (positive RMS delta, AGC-normalized)
+        raw_onset = compute_onset_strength(raw_rms, self._prev_rms)
+        if self._peak_onset == 0.0 and raw_onset > 0.0:
+            # Cold start: seed the AGC peak, suppress the first-frame spike
+            self._peak_onset = raw_onset
+            onset_strength = 0.0
+        else:
+            self._peak_onset = max(raw_onset, self._peak_onset * 0.995)
+            onset_strength = raw_onset / (self._peak_onset + 1e-10)
+        self._prev_rms = raw_rms
 
         return AudioFrame(
             bass=bass,
@@ -220,4 +270,8 @@ class AudioCapture:
             rms=rms,
             is_beat=is_beat,
             timestamp=time.monotonic(),
+            onset_strength=onset_strength,
+            spectral_flux=spectral_flux,
+            mid_beat=mid_beat,
+            high_beat=high_beat,
         )

@@ -157,6 +157,58 @@ class TestParticles:
 # ---------------------------------------------------------------------------
 
 
+class TestNewAudioFields:
+    def test_onset_strength_scales_collapse(self):
+        """Higher onset_strength should produce stronger collapse intensity."""
+        viz_low = EventHorizon(seed=42)
+        viz_high = EventHorizon(seed=42)
+
+        viz_low.render(_make_frame(is_beat=True, onset_strength=0.0))
+        viz_high.render(_make_frame(is_beat=True, onset_strength=1.0))
+
+        assert viz_high._collapse_intensity > viz_low._collapse_intensity
+        # Default (onset=0) should match old behavior: exactly 1.0
+        assert viz_low._collapse_intensity == 1.0
+
+    def test_high_beat_sets_spiral_frames(self):
+        """high_beat=True should set _spiral_frames to 3."""
+        viz = EventHorizon(seed=42)
+        viz.render(_make_frame(high_beat=True))
+        assert viz._spiral_frames > 0
+
+    def test_spiral_frames_decay(self):
+        """_spiral_frames should decrement each non-high-beat frame."""
+        viz = EventHorizon(seed=42)
+        viz.render(_make_frame(high_beat=True))
+        initial = viz._spiral_frames
+
+        viz.render(_make_frame())
+        assert viz._spiral_frames == initial - 1
+
+        viz.render(_make_frame())
+        viz.render(_make_frame())
+        assert viz._spiral_frames == 0
+
+    def test_spectral_flux_turbulence_affects_particles(self):
+        """Particles with high spectral_flux should scatter more than with zero flux."""
+        viz_calm = EventHorizon(seed=42)
+        viz_turb = EventHorizon(seed=42)
+
+        # Spawn particles with a beat
+        viz_calm.render(_make_frame(is_beat=True, rms=0.5))
+        viz_turb.render(_make_frame(is_beat=True, rms=0.5))
+
+        # Run several frames with different flux
+        for _ in range(10):
+            viz_calm.render(_make_frame(rms=0.5, spectral_flux=0.0))
+            viz_turb.render(_make_frame(rms=0.5, spectral_flux=1.0))
+
+        # Turbulent particles should be at different positions
+        calm_pos = [(p.x, p.y) for p in viz_calm._particles]
+        turb_pos = [(p.x, p.y) for p in viz_turb._particles]
+        assert calm_pos != turb_pos, "Turbulence should scatter particles"
+
+
 class TestDeterminism:
     def test_deterministic_output(self):
         """Two instances with the same seed produce identical output."""

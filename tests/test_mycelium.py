@@ -84,11 +84,16 @@ class TestBeatSpawning:
         assert len(viz._tendrils) > 0
 
     def test_spawn_count_bounded(self):
-        """Spawn count should be between 2 and 5 per beat."""
+        """Spawn count should be 2-5 per beat with no onset bonus."""
         viz = Mycelium(seed=4)
-        viz.render(_beat_frame(bass=0.5))
-        # First beat: tendrils spawned should be 2-5
+        viz.render(_beat_frame(bass=0.5, onset_strength=0.0))
         assert 2 <= len(viz._tendrils) <= 5
+
+    def test_spawn_count_with_onset_bonus(self):
+        """Spawn count should be 2-8 per beat with max onset bonus."""
+        viz = Mycelium(seed=4)
+        viz.render(_beat_frame(bass=0.5, onset_strength=1.0))
+        assert 2 <= len(viz._tendrils) <= 8
 
     def test_max_tendrils_cap(self):
         """Total live tendrils should never exceed max_tendrils."""
@@ -182,6 +187,71 @@ class TestOccupiedTracking:
 
         assert len(viz._tendrils) == 0
         assert len(viz._occupied) == 0, "Expected _occupied to be empty after all tendrils die"
+
+
+class TestNewAudioFields:
+    def test_mid_beat_triggers_extra_forks(self):
+        """mid_beat should cause more tendrils than bass beat alone."""
+        viz_bass = Mycelium(seed=7)
+        viz_both = Mycelium(seed=7)
+
+        # Warm up identically
+        for _ in range(5):
+            viz_bass.render(_silence())
+            viz_both.render(_silence())
+
+        # Bass beat only vs bass beat + mid_beat
+        viz_bass.render(_beat_frame())
+        viz_both.render(_beat_frame(mid_beat=True))
+
+        # Render a few more frames to let forks materialize
+        for _ in range(3):
+            viz_bass.render(_silence())
+            viz_both.render(_silence())
+
+        assert len(viz_both._tendrils) >= len(viz_bass._tendrils), (
+            "mid_beat should produce at least as many tendrils"
+        )
+
+    def test_onset_strength_scales_spawn_count(self):
+        """Higher onset_strength should spawn more tendrils on beat."""
+        viz_low = Mycelium(seed=7)
+        viz_high = Mycelium(seed=7)
+
+        # Identical warmup
+        for _ in range(5):
+            viz_low.render(_silence())
+            viz_high.render(_silence())
+
+        # Beat with different onset strengths
+        viz_low.render(_beat_frame(onset_strength=0.0))
+        viz_high.render(_beat_frame(onset_strength=1.0))
+
+        assert len(viz_high._tendrils) >= len(viz_low._tendrils), (
+            "Higher onset should spawn more tendrils"
+        )
+
+    def test_spectral_flux_modulates_decay(self):
+        """High spectral_flux should cause faster glow decay."""
+        import numpy as np
+
+        viz_calm = Mycelium(seed=7)
+        viz_flux = Mycelium(seed=7)
+
+        # Energize both identically
+        for _ in range(5):
+            viz_calm.render(_beat_frame(rms=0.9))
+            viz_flux.render(_beat_frame(rms=0.9))
+
+        # Now run several frames with different flux
+        for _ in range(10):
+            viz_calm.render(_make_frame(rms=0.3, spectral_flux=0.0))
+            viz_flux.render(_make_frame(rms=0.3, spectral_flux=0.9))
+
+        # High flux should have less glow remaining
+        assert np.sum(viz_flux._glow) < np.sum(viz_calm._glow), (
+            "Higher spectral_flux should decay glow faster"
+        )
 
 
 class TestStability:
