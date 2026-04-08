@@ -183,16 +183,17 @@ class _HotkeyState:
 class _SafeGlobalHotKeys(keyboard.GlobalHotKeys):
     """GlobalHotKeys that tolerates the macOS/pynput injected-arg bug.
 
-    pynput 1.8.x added an ``injected`` parameter to callbacks but the Darwin
-    backend sometimes omits it, crashing ``GlobalHotKeys._on_press``.
-    Absorbing extra args with ``*args`` prevents the TypeError.
+    pynput 1.8.x added an ``injected`` parameter to ``_on_press`` /
+    ``_on_release``, but the Darwin backend sometimes calls them *without*
+    it (e.g. media keys).  We normalise by defaulting ``injected=False``
+    when the argument is missing.
     """
 
-    def _on_press(self, key, *args):  # type: ignore[override]
-        return super()._on_press(key, *args)
+    def _on_press(self, key, injected=False):  # type: ignore[override]
+        return super()._on_press(key, injected)
 
-    def _on_release(self, key, *args):  # type: ignore[override]
-        return super()._on_release(key, *args)
+    def _on_release(self, key, injected=False):  # type: ignore[override]
+        return super()._on_release(key, injected)
 
 
 def _start_hotkey_listener(state: _HotkeyState) -> _SafeGlobalHotKeys:
