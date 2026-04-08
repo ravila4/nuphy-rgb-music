@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 from contextlib import ExitStack
-from typing import Protocol, Sequence
+from typing import Sequence
 
 import hid
 import sounddevice as sd
@@ -24,12 +24,6 @@ from nuphy_rgb.probe import probe
 from nuphy_rgb.visualizer import Visualizer
 
 
-class _Named(Protocol):
-    """Any object with a string name attribute."""
-
-    name: str
-
-
 class _CyclicIndex:
     """Thread-safe cyclic index with an optional named-item registry.
 
@@ -44,6 +38,8 @@ class _CyclicIndex:
     """
 
     def __init__(self, count: int, names: Sequence[str] | None = None) -> None:
+        if count <= 0:
+            raise ValueError(f"count must be positive, got {count}")
         self._lock = threading.Lock()
         self._count = count
         self._index = 0
@@ -144,22 +140,6 @@ class _HotkeyState:
         with self._lock:
             self.quit = True
 
-
-def _find_effect_index(name: str, items: Sequence[_Named]) -> int | None:
-    """Return the index of the first item whose name matches (case-insensitive).
-
-    Args:
-        name: Name to search for.
-        items: Sequence of objects with a ``name`` attribute.
-
-    Returns:
-        Index of the first match, or None if not found.
-    """
-    needle = name.lower()
-    for i, item in enumerate(items):
-        if item.name.lower() == needle:
-            return i
-    return None
 
 
 def _start_hotkey_listener(state: _HotkeyState) -> keyboard.GlobalHotKeys:
@@ -273,12 +253,10 @@ def run(
 
         # Apply --effect if specified
         if effect is not None:
-            idx = _find_effect_index(effect, visualizers)
-            if idx is None:
+            if not state.key.set_by_name(effect):
                 known = ", ".join(effect_names)
                 print(f"Error: unknown effect '{effect}'. Known effects: {known}")
                 sys.exit(1)
-            state.key.set(idx)
 
         listener = _start_hotkey_listener(state)
 

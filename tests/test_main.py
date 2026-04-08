@@ -1,22 +1,10 @@
-"""Tests for _CyclicIndex and _find_effect_index in main.py."""
+"""Tests for _CyclicIndex in main.py."""
 
 import threading
 
 import pytest
 
-from nuphy_rgb.main import _CyclicIndex, _find_effect_index
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-class _Named:
-    """Minimal stand-in for a Visualizer with just a name attribute."""
-
-    def __init__(self, name: str) -> None:
-        self.name = name
+from nuphy_rgb.main import _CyclicIndex
 
 
 # ---------------------------------------------------------------------------
@@ -193,28 +181,11 @@ class TestCyclicIndexThreadSafety:
         assert idx.index == 0
 
 
-# ---------------------------------------------------------------------------
-# _find_effect_index
-# ---------------------------------------------------------------------------
+class TestCyclicIndexCountGuard:
+    def test_zero_count_raises(self) -> None:
+        with pytest.raises(ValueError):
+            _CyclicIndex(0)
 
-
-class TestFindEffectIndex:
-    def test_finds_by_exact_name(self) -> None:
-        items = [_Named("ColorWash"), _Named("Mycelium"), _Named("Waterfall")]
-        assert _find_effect_index("Mycelium", items) == 1
-
-    def test_case_insensitive(self) -> None:
-        items = [_Named("ColorWash"), _Named("Mycelium")]
-        assert _find_effect_index("colorwash", items) == 0
-
-    def test_returns_none_when_not_found(self) -> None:
-        items = [_Named("ColorWash"), _Named("Mycelium")]
-        assert _find_effect_index("Nonexistent", items) == None
-
-    def test_empty_list_returns_none(self) -> None:
-        assert _find_effect_index("anything", []) is None
-
-    def test_finds_first_match(self) -> None:
-        """If two items share a name, return the first index."""
-        items = [_Named("Foo"), _Named("Foo")]
-        assert _find_effect_index("foo", items) == 0
+    def test_negative_count_raises(self) -> None:
+        with pytest.raises(ValueError):
+            _CyclicIndex(-1)
