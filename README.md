@@ -27,7 +27,7 @@ toolchain needed.
    ```bash
    brew install dfu-util  # if not installed
    dfu-util -a 0 -d 0x19F5:0x3246 -s 0x08000000:leave \
-     -D firmware/fallback/qmk_rgb_streaming_697cf7c.bin
+     -D firmware/fallback/qmk_rgb_streaming_a62d78d.bin
    ```
 
 3. Keyboard reboots automatically
