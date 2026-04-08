@@ -8,3 +8,5 @@ Research notes for NuPhy Air75 V2 music-reactive RGB project.
 | [firmware.md](firmware.md)          | QMK firmware details, Raw HID protocol, LED map, flashing |
 | [host-software.md](host-software.md)| Python libs, audio capture, beat detection, viz ideas |
 | [side-leds.md](side-leds.md)        | Side light bar hardware, firmware, proposed host protocol |
+| [side-led-effects.md](side-led-effects.md) | Side effect architecture: protocol, hotkeys, proposed effects |
+| [chroma-color-mapping.md](chroma-color-mapping.md) | Pitch-aware color mapping: chroma vs spectral centroid |
