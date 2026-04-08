@@ -350,7 +350,16 @@ def main():
         "--effect", type=str, default=None,
         help="Start on a specific effect by name (case-insensitive, e.g. colorwash).",
     )
+    parser.add_argument(
+        "--list-effects", action="store_true",
+        help="List available effects and exit.",
+    )
     args = parser.parse_args()
+
+    if args.list_effects:
+        for cls in ALL_EFFECTS:
+            print(cls().name)
+        return
 
     if args.list_audio:
         list_audio_devices()
