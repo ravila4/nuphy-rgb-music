@@ -14,6 +14,9 @@ MID_LOW, MID_HIGH = 150, 2000
 HIGH_LOW, HIGH_HIGH = 2000, 16000
 
 
+NUM_SPECTRUM_BINS = 16
+
+
 @dataclass(frozen=True)
 class AudioFrame:
     """Immutable snapshot of audio analysis for one frame."""
@@ -30,6 +33,8 @@ class AudioFrame:
     spectral_flux: float = 0.0
     mid_beat: bool = False
     high_beat: bool = False
+    spectrum: tuple[float, ...] = (0.0,) * NUM_SPECTRUM_BINS
+    spectral_centroid: float = 0.0
 
 
 class ExpFilter:
@@ -87,6 +92,42 @@ def compute_spectral_flux(
     """
     diff = magnitudes - prev_magnitudes
     return float(np.sum(np.maximum(diff, 0.0)))
+
+
+def compute_spectrum_bins(
+    magnitudes: np.ndarray,
+    freqs: np.ndarray,
+    num_bins: int = NUM_SPECTRUM_BINS,
+    min_freq: float = 20.0,
+    max_freq: float = 16000.0,
+) -> list[float]:
+    """Bin FFT magnitudes into log-spaced frequency bands.
+
+    Returns a list of `num_bins` floats — mean squared magnitude per band.
+    Frequencies outside [min_freq, max_freq] are excluded.
+    """
+    log_edges = np.logspace(
+        np.log10(min_freq), np.log10(max_freq), num_bins + 1
+    )
+    result: list[float] = []
+    for i in range(num_bins):
+        mask = (freqs >= log_edges[i]) & (freqs < log_edges[i + 1])
+        if np.any(mask):
+            result.append(float(np.mean(magnitudes[mask] ** 2)))
+        else:
+            result.append(0.0)
+    return result
+
+
+def compute_spectral_centroid(magnitudes: np.ndarray, freqs: np.ndarray) -> float:
+    """Weighted average frequency — the 'center of mass' of the spectrum.
+
+    Returns 0.0 on silence.
+    """
+    total = np.sum(magnitudes)
+    if total < 1e-10:
+        return 0.0
+    return float(np.sum(magnitudes * freqs) / total)
 
 
 def compute_onset_strength(rms: float, prev_rms: float) -> float:
@@ -236,6 +277,7 @@ class AudioCapture:
         highs = self._high_filter.update(raw_highs * scale)
 
         dominant_freq = compute_dominant_freq(magnitudes, self._freqs)
+        spectral_centroid = compute_spectral_centroid(magnitudes, self._freqs)
         raw_rms = float(np.sqrt(np.mean(chunk**2)))
         self._peak_rms = max(raw_rms, self._peak_rms * 0.995)
         rms = self._rms_filter.update(raw_rms / (self._peak_rms + 1e-10))
@@ -263,6 +305,10 @@ class AudioCapture:
             onset_strength = raw_onset / (self._peak_onset + 1e-10)
         self._prev_rms = raw_rms
 
+        # Spectrum bins (same AGC scale as band energies)
+        raw_bins = compute_spectrum_bins(magnitudes, self._freqs)
+        spectrum = tuple(b * scale for b in raw_bins)
+
         return AudioFrame(
             bass=bass,
             mids=mids,
@@ -276,4 +322,6 @@ class AudioCapture:
             spectral_flux=spectral_flux,
             mid_beat=mid_beat,
             high_beat=high_beat,
+            spectrum=spectrum,
+            spectral_centroid=spectral_centroid,
         )

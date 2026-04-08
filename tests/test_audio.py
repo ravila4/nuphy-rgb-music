@@ -9,7 +9,9 @@ from nuphy_rgb.audio import (
     compute_band_energies,
     compute_dominant_freq,
     compute_onset_strength,
+    compute_spectral_centroid,
     compute_spectral_flux,
+    compute_spectrum_bins,
 )
 
 SAMPLE_RATE = 48000
@@ -235,12 +237,82 @@ class TestMultiBandBeatDetector:
         assert bd.update(5.0) is True
 
 
+class TestComputeSpectrumBins:
+    def test_returns_requested_number_of_bins(self):
+        mags, freqs = _make_sine_fft(440.0)
+        bins = compute_spectrum_bins(mags, freqs, num_bins=16)
+        assert len(bins) == 16
+
+    def test_returns_floats(self):
+        mags, freqs = _make_sine_fft(440.0)
+        bins = compute_spectrum_bins(mags, freqs, num_bins=16)
+        assert all(isinstance(b, float) for b in bins)
+
+    def test_silence_returns_all_zeros(self):
+        mags, freqs = _make_silence_fft()
+        bins = compute_spectrum_bins(mags, freqs, num_bins=16)
+        assert all(b == 0.0 for b in bins)
+
+    def test_bass_tone_concentrates_in_low_bins(self):
+        mags, freqs = _make_sine_fft(80.0)
+        bins = compute_spectrum_bins(mags, freqs, num_bins=16)
+        # Energy should be in the lower bins
+        low_energy = sum(bins[:4])
+        high_energy = sum(bins[12:])
+        assert low_energy > high_energy * 10
+
+    def test_high_tone_concentrates_in_high_bins(self):
+        mags, freqs = _make_sine_fft(8000.0)
+        bins = compute_spectrum_bins(mags, freqs, num_bins=16)
+        low_energy = sum(bins[:4])
+        high_energy = sum(bins[12:])
+        assert high_energy > low_energy * 10
+
+    def test_all_values_non_negative(self):
+        mags, freqs = _make_sine_fft(440.0)
+        bins = compute_spectrum_bins(mags, freqs, num_bins=16)
+        assert all(b >= 0.0 for b in bins)
+
+    def test_different_bin_counts(self):
+        mags, freqs = _make_sine_fft(440.0)
+        for n in (8, 16, 32):
+            bins = compute_spectrum_bins(mags, freqs, num_bins=n)
+            assert len(bins) == n
+
+
+class TestComputeSpectralCentroid:
+    def test_bass_tone_has_low_centroid(self):
+        mags, freqs = _make_sine_fft(80.0)
+        centroid = compute_spectral_centroid(mags, freqs)
+        assert centroid < 200.0
+
+    def test_high_tone_has_high_centroid(self):
+        mags, freqs = _make_sine_fft(8000.0)
+        centroid = compute_spectral_centroid(mags, freqs)
+        assert centroid > 4000.0
+
+    def test_silence_returns_zero(self):
+        mags, freqs = _make_silence_fft()
+        centroid = compute_spectral_centroid(mags, freqs)
+        assert centroid == 0.0
+
+    def test_returns_float(self):
+        mags, freqs = _make_sine_fft(440.0)
+        assert isinstance(compute_spectral_centroid(mags, freqs), float)
+
+    def test_higher_tone_gives_higher_centroid(self):
+        mags_low, freqs = _make_sine_fft(200.0)
+        mags_high, _ = _make_sine_fft(4000.0)
+        assert compute_spectral_centroid(mags_high, freqs) > compute_spectral_centroid(mags_low, freqs)
+
+
 class TestAudioFrame:
     def test_is_frozen(self):
         frame = AudioFrame(
             bass=0.5, mids=0.3, highs=0.1,
             dominant_freq=100.0, rms=0.4, is_beat=False, timestamp=0.0,
             onset_strength=0.0, spectral_flux=0.0, mid_beat=False, high_beat=False,
+            spectrum=(0.0,) * 16,
         )
         with pytest.raises(AttributeError):
             frame.bass = 0.9
@@ -273,6 +345,10 @@ class TestAudioCapture:
         assert isinstance(frame.spectral_flux, float)
         assert isinstance(frame.mid_beat, bool)
         assert isinstance(frame.high_beat, bool)
+        # Spectrum bins
+        assert isinstance(frame.spectrum, tuple)
+        assert len(frame.spectrum) == 16
+        assert all(isinstance(v, float) for v in frame.spectrum)
 
     def test_process_latest_keeps_only_latest(self):
         cap = self._make_capture()

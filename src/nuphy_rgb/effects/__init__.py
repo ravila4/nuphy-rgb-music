@@ -7,6 +7,7 @@ from nuphy_rgb.effects.color_wash import ColorWash
 from nuphy_rgb.effects.event_horizon import EventHorizon
 from nuphy_rgb.effects.interference_pond import InterferencePond
 from nuphy_rgb.effects.mycelium import Mycelium
+from nuphy_rgb.effects.spectral_waterfall import SpectralWaterfall
 from nuphy_rgb.effects.strange_attractor import StrangeAttractor
 
 ALL_EFFECTS = [
@@ -15,4 +16,5 @@ ALL_EFFECTS = [
     Mycelium,
     EventHorizon,
     StrangeAttractor,
+    SpectralWaterfall,
 ]
