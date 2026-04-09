@@ -8,6 +8,7 @@ import numpy as np
 
 from nuphy_rgb.audio import AudioFrame, ExpFilter
 from nuphy_rgb.effects.grid import MAX_COLS, NEIGHBORS, NUM_LEDS, NUM_ROWS, RC_TO_LED, grid_to_leds
+from nuphy_rgb.visualizer_params import VisualizerParam
 
 
 @dataclass
@@ -67,6 +68,20 @@ class Mycelium:
         self._glow = np.zeros((NUM_ROWS, MAX_COLS, 3), dtype=np.float32)
         self._rms_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
         self._occupied: set[tuple[int, int]] = set()
+        self.params: dict[str, VisualizerParam] = {
+            "decay_rate": VisualizerParam(
+                value=0.93, default=0.93, min=0.80, max=0.99,
+                description="Glow decay per frame (higher = longer trails)",
+            ),
+            "energy_decay": VisualizerParam(
+                value=0.82, default=0.82, min=0.60, max=0.97,
+                description="Tendril energy decay per step",
+            ),
+            "fork_chance": VisualizerParam(
+                value=0.20, default=0.20, min=0.0, max=0.60,
+                description="Probability a tendril forks each step",
+            ),
+        }
 
     def _stamp(self, row: int, col: int, hue: float, energy: float) -> None:
         """Blend HSV color into the glow grid at (row, col) using max blend."""
@@ -107,7 +122,7 @@ class Mycelium:
         rms = self._rms_filter.update(frame.rms)
 
         # 2. Decay glow (modulated by spectral flux — faster decay during busy passages)
-        decay = 0.93 - frame.spectral_flux * 0.05
+        decay = self.params["decay_rate"].get() - frame.spectral_flux * 0.05
         self._glow *= decay
 
         # 3. Phosphorescent base: keep a minimum green floor
@@ -128,7 +143,7 @@ class Mycelium:
 
             # Advance age and decay energy
             t.age += 1
-            t.energy *= 0.82
+            t.energy *= self.params["energy_decay"].get()
 
             # Check death conditions
             if t.age >= t.max_age or t.energy < 0.05:
@@ -146,9 +161,9 @@ class Mycelium:
                     t.row = nr
                     t.col = nc
 
-            # Fork: 20% chance to spawn a child tendril
+            # Fork: spawn a child tendril (chance controlled by fork_chance param)
             if (
-                self._rng.random() < 0.20
+                self._rng.random() < self.params["fork_chance"].get()
                 and len(self._tendrils) + len(forks) < self._max_tendrils
             ):
                 nbrs = NEIGHBORS.get((t.row, t.col), [])

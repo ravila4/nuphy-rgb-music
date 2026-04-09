@@ -1,7 +1,12 @@
 """Daemon state shared between the main loop and IPC handlers."""
 
+from __future__ import annotations
+
 import threading
 from collections.abc import Sequence
+from typing import Any
+
+from nuphy_rgb.visualizer_params import VisualizerParam
 
 
 class CyclicIndex:
@@ -126,6 +131,8 @@ class DaemonState:
         effect_names: Sequence[str] | None = None,
         num_sidelights: int = 0,
         sidelight_names: Sequence[str] | None = None,
+        visualizers: Sequence[Any] = (),
+        side_visualizers: Sequence[Any] = (),
     ) -> None:
         self.key = CyclicIndex(num_effects, names=effect_names)
         self.side: CyclicIndex | None = (
@@ -134,6 +141,32 @@ class DaemonState:
             else None
         )
         self.quit_event = threading.Event()
+        self._visualizers = list(visualizers)
+        self._side_visualizers = list(side_visualizers)
+
+    def _active_effect(self) -> Any | None:
+        """Snapshot the currently active effect, or None."""
+        if not self._visualizers:
+            return None
+        return self._visualizers[self.key.index]
+
+    def get_active_params(self) -> dict[str, VisualizerParam]:
+        """Return the params dict for the currently active effect, or {}."""
+        effect = self._active_effect()
+        if effect is None:
+            return {}
+        return getattr(effect, "params", {})
+
+    def set_active_param(self, name: str, value: float) -> VisualizerParam:
+        """Set a param on the active effect. Raises ValueError on bad name/range."""
+        effect = self._active_effect()
+        if effect is None:
+            raise ValueError("no active effect")
+        params = getattr(effect, "params", {})
+        if name not in params:
+            raise ValueError(f"unknown param: {name}")
+        params[name].set(value)
+        return params[name]
 
     def request_quit(self) -> None:
         """Signal the main loop to exit."""

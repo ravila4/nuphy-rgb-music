@@ -10,6 +10,7 @@ import pytest
 
 from nuphy_rgb.ipc import IPCServer
 from nuphy_rgb.state import DaemonState
+from nuphy_rgb.visualizer_params import VisualizerParam
 
 
 @pytest.fixture()
@@ -255,3 +256,120 @@ class TestPushNotifications:
         assert notification["method"] == "effect_changed"
         assert notification["params"] == {"name": "Beta"}
         assert "id" not in notification
+
+
+# -- Param tests --
+
+
+class _FakeWithParams:
+    name = "Fancy"
+
+    def __init__(self):
+        self.params = {
+            "speed": VisualizerParam(
+                value=0.5, default=0.5, min=0.0, max=1.0,
+                description="How fast",
+            ),
+        }
+
+    def render(self, frame):
+        return []
+
+
+class _FakeNoParams:
+    name = "Plain"
+
+    def render(self, frame):
+        return []
+
+
+@pytest.fixture()
+def param_state():
+    visualizers = [_FakeWithParams(), _FakeNoParams()]
+    return DaemonState(
+        num_effects=2,
+        effect_names=["Fancy", "Plain"],
+        visualizers=visualizers,
+    )
+
+
+@pytest.fixture()
+def param_server(param_state, sock_dir, monkeypatch):
+    sock_path = sock_dir / "ctl.sock"
+    monkeypatch.setattr(
+        "nuphy_rgb.ipc.control_socket_path", lambda: sock_path
+    )
+    srv = IPCServer(param_state)
+    srv.start()
+    yield srv, sock_path
+    srv.stop()
+
+
+class TestGetParams:
+    def test_returns_params_for_active_effect(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_params", "id": 1,
+        })
+        result = resp["result"]
+        assert "speed" in result
+        assert result["speed"]["value"] == 0.5
+        assert result["speed"]["min"] == 0.0
+        assert result["speed"]["max"] == 1.0
+        assert result["speed"]["description"] == "How fast"
+
+    def test_returns_empty_for_no_params(self, param_server, param_state) -> None:
+        srv, sock_path = param_server
+        param_state.key.set(1)  # switch to Plain
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_params", "id": 1,
+        })
+        assert resp["result"] == {}
+
+
+class TestSetParam:
+    def test_set_valid_value(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param",
+            "params": {"name": "speed", "value": 0.8}, "id": 1,
+        })
+        assert resp["result"] == {"name": "speed", "value": 0.8}
+
+    def test_mutation_visible_on_get(self, param_server) -> None:
+        srv, sock_path = param_server
+        _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param",
+            "params": {"name": "speed", "value": 0.3}, "id": 1,
+        })
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_params", "id": 2,
+        })
+        assert resp["result"]["speed"]["value"] == 0.3
+
+    def test_out_of_range_returns_error(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param",
+            "params": {"name": "speed", "value": 5.0}, "id": 1,
+        })
+        assert "error" in resp
+        assert "out of range" in resp["error"]["message"]
+
+    def test_unknown_param_returns_error(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param",
+            "params": {"name": "nonexistent", "value": 0.5}, "id": 1,
+        })
+        assert "error" in resp
+        assert "unknown param" in resp["error"]["message"]
+
+    def test_missing_name_returns_error(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param",
+            "params": {"value": 0.5}, "id": 1,
+        })
+        assert "error" in resp
+        assert "missing required param" in resp["error"]["message"]

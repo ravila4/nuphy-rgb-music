@@ -183,6 +183,8 @@ def run(
             effect_names=effect_names,
             num_sidelights=len(side_visualizers),
             sidelight_names=sidelight_names,
+            visualizers=visualizers,
+            side_visualizers=side_visualizers,
         )
 
         # Apply --effect if specified

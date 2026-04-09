@@ -242,6 +242,27 @@ class TestNewAudioFields:
         )
 
 
+class TestParams:
+    def test_has_expected_params(self):
+        viz = Mycelium()
+        assert hasattr(viz, "params")
+        assert set(viz.params.keys()) == {"decay_rate", "energy_decay", "fork_chance"}
+
+    def test_render_valid_after_param_change(self):
+        viz = Mycelium(seed=42)
+        viz.params["decay_rate"].set(0.85)
+        viz.params["fork_chance"].set(0.50)
+        # Warm up with beats, then check output is still valid
+        for _ in range(10):
+            viz.render(_beat_frame(bass=0.5))
+        colors = viz.render(make_frame(rms=0.3))
+        assert len(colors) == NUM_LEDS
+        for r, g, b in colors:
+            assert 0 <= r <= 255
+            assert 0 <= g <= 255
+            assert 0 <= b <= 255
+
+
 class TestStability:
     def test_no_crash_on_rapid_beats(self):
         """Rapid successive beats should not raise exceptions."""
