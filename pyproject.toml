@@ -11,6 +11,7 @@ dependencies = [
     "hidapi>=0.14",
     "sounddevice>=0.4",
     "numpy>=1.26",
+    "pyobjc-framework-coreaudio>=12.1 ; sys_platform == 'darwin'",
 ]
 
 [project.optional-dependencies]

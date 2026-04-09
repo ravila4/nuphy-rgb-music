@@ -7,8 +7,7 @@ Tested on **NuPhy Air75 V2**. Support for other Air models incoming.
 
 ## Requirements
 
-- **macOS** (tested on Apple Silicon), or **Linux** (X11/Wayland, experimental)
-- Audio loopback: [BlackHole 2ch](https://existential.audio/blackhole/) on macOS; built-in monitor source on Linux
+- **macOS 14.2+** (tested on Apple Silicon), or **Linux** (X11/Wayland, experimental)
 - Python 3.11+
 - Custom QMK firmware with RGB streaming handler (see below)
 
@@ -60,7 +59,7 @@ The built binary lands in `.build/nuphy_air75v2_ansi_via.bin`.
 ### macOS
 
 ```bash
-brew install hidapi blackhole-2ch
+brew install hidapi
 ```
 
 ### Linux (Debian/Ubuntu)
@@ -97,11 +96,10 @@ uv sync
 
 #### macOS
 
-BlackHole creates a virtual audio device. To capture system audio:
-
-1. Open **Audio MIDI Setup** (built into macOS)
-2. Create a **Multi-Output Device** combining your speakers + BlackHole 2ch
-3. Set the Multi-Output Device as your system output
+System audio capture uses the CoreAudio Process Tap API (macOS 14.2+). On
+first run, macOS will prompt you to grant **Screen & System Audio Recording**
+permission to your terminal app. No extra software needed — volume keys and
+audio routing work normally.
 
 #### Linux
 
