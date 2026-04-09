@@ -13,6 +13,7 @@ import sounddevice as sd
 
 from nuphy_rgb.audio import AudioCapture
 from nuphy_rgb.audio_discovery import (
+    LoopbackResult,
     find_loopback_device,
     list_audio_devices,
     move_source_output_to_monitor,
@@ -101,21 +102,28 @@ def run(
 
     # Find audio device
     monitor_name: str | None = None
+    tap = None
     if audio_device is None:
         result = find_loopback_device()
         if result is None:
             if sys.platform == "darwin":
-                print("BlackHole not found. Install with: brew install blackhole-2ch")
+                print("No audio source found (macOS 14.2+ required).")
+                print("  Grant 'Screen & System Audio Recording' in System Settings.")
             else:
                 print("No monitor source found. Ensure PulseAudio/PipeWire is running.")
             print(
                 "Use --list-audio to see available inputs, --audio-device to specify."
             )
             sys.exit(1)
-        audio_device, monitor_name = result
-    print(
-        f"Audio device: {sd.query_devices(audio_device)['name']} (index {audio_device})"
-    )
+        audio_device = result.device_index
+        monitor_name = result.monitor_name
+        tap = result.tap
+    if tap is not None:
+        print("Audio: CoreAudio Process Tap (system audio)")
+    else:
+        print(
+            f"Audio device: {sd.query_devices(audio_device)['name']} (index {audio_device})"
+        )
     if monitor_name:
         print(f"  Monitor source: {monitor_name} (will route after stream opens)")
 
@@ -207,8 +215,6 @@ def run(
         print(f"  IPC: {sock_path}")
 
         # Set up audio capture
-        audio = AudioCapture(device_index=audio_device)
-
         frame_period = 1.0 / fps
         kb_label = f"{len(devices)} keyboard{'s' if len(devices) > 1 else ''}"
         print(
@@ -225,6 +231,25 @@ def run(
             if state.side is not None:
                 for dev, _ in devices:
                     stack.enter_context(side_streaming_mode(dev))
+
+            # Start CoreAudio tap or sounddevice stream
+            if tap is not None:
+                try:
+                    stack.enter_context(tap)
+                    audio = AudioCapture(external_queue=tap.queue)
+                except Exception:
+                    log.warning(
+                        "CoreAudio tap failed. "
+                        "Grant 'Screen & System Audio Recording' in System Settings.",
+                        exc_info=True,
+                    )
+                    print(
+                        "Error: CoreAudio tap failed. Check 'Screen & System Audio"
+                        " Recording' in System Settings > Privacy & Security."
+                    )
+                    sys.exit(1)
+            else:
+                audio = AudioCapture(device_index=audio_device)
 
             audio.start()
             if monitor_name:

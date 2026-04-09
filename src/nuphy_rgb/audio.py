@@ -235,12 +235,16 @@ class AudioCapture:
         sample_rate: int = SAMPLE_RATE,
         block_size: int = BLOCK_SIZE,
         fft_size: int = FFT_SIZE,
+        external_queue: queue.SimpleQueue[np.ndarray] | None = None,
     ):
         self._device_index = device_index
+        self._external = external_queue is not None
         self._sample_rate = sample_rate
         self._block_size = block_size
         self._fft_size = fft_size
-        self._queue: queue.SimpleQueue[np.ndarray] = queue.SimpleQueue()
+        self._queue: queue.SimpleQueue[np.ndarray] = (
+            external_queue if external_queue is not None else queue.SimpleQueue()
+        )
         self._ring = np.zeros(fft_size, dtype=np.float32)
         self._window = np.hanning(fft_size).astype(np.float32)
         self._freqs = np.fft.rfftfreq(fft_size, 1.0 / sample_rate)
@@ -270,6 +274,8 @@ class AudioCapture:
         self._queue.put_nowait(indata[:, 0].copy())
 
     def start(self) -> None:
+        if self._external:
+            return  # queue already being fed by an external source
         self._stream = sd.InputStream(
             device=self._device_index,
             samplerate=self._sample_rate,
@@ -281,6 +287,8 @@ class AudioCapture:
         self._stream.start()
 
     def stop(self) -> None:
+        if self._external:
+            return  # external source manages its own lifecycle
         if self._stream is not None:
             self._stream.stop()
             self._stream.close()

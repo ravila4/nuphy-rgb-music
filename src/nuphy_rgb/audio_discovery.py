@@ -1,13 +1,35 @@
 """Platform-specific audio loopback device discovery."""
 
+from __future__ import annotations
+
 import logging
 import os
 import subprocess
 import sys
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import sounddevice as sd
 
+if TYPE_CHECKING:
+    from nuphy_rgb.coreaudio_tap import ProcessTap
+
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class LoopbackResult:
+    """Result from :func:`find_loopback_device`.
+
+    *device_index* is ``-1`` when using a CoreAudio Process Tap (no
+    sounddevice index exists).  *monitor_name* is set only on Linux when
+    pactl routing is needed.  *tap* is an unstarted :class:`ProcessTap`
+    whose lifecycle the caller manages.
+    """
+
+    device_index: int
+    monitor_name: str | None = None
+    tap: ProcessTap | None = field(default=None, repr=False)
 
 
 def find_pactl_monitor() -> str | None:
@@ -90,24 +112,31 @@ def move_source_output_to_monitor(monitor_name: str) -> None:
     log.debug("No source-output found for PID %s", pid)
 
 
-def find_loopback_device() -> tuple[int, str | None] | None:
+def find_loopback_device() -> LoopbackResult | None:
     """Find a system-audio loopback device.
 
-    macOS: BlackHole virtual audio device.
+    macOS 14.2+: CoreAudio Process Tap (system audio, no extra software).
     Linux: PulseAudio/PipeWire monitor source (via sounddevice or pactl).
 
-    Returns ``(device_index, monitor_name)`` where *monitor_name* is set only
-    when the device needs per-app routing via ``pactl move-source-output``
-    after the stream is opened.  Returns ``None`` when no device is found.
+    Returns a :class:`LoopbackResult` or ``None`` when no device is found.
+    If a :class:`ProcessTap` is returned, the caller must manage its
+    lifecycle (start it inside an ``ExitStack``, for example).
     """
+    # macOS: CoreAudio Process Tap
+    if sys.platform == "darwin":
+        from nuphy_rgb.coreaudio_tap import ProcessTap, is_available
+
+        if is_available():
+            return LoopbackResult(device_index=-1, tap=ProcessTap())
+        return None
+
+    # Linux: sounddevice monitor source
     for i, d in enumerate(sd.query_devices()):
         if d["max_input_channels"] <= 0:
             continue
         name = d["name"]
-        if "BlackHole" in name:
-            return (i, None)
         if sys.platform.startswith("linux") and name.lower().startswith("monitor of "):
-            return (i, None)
+            return LoopbackResult(device_index=i)
 
     # On Linux, PortAudio often lacks a PulseAudio backend so monitor sources
     # are invisible.  Fall back to pactl detection + per-app stream routing.
@@ -118,19 +147,24 @@ def find_loopback_device() -> tuple[int, str | None] | None:
             default_idx = sd.default.device[0]
             if default_idx is None or default_idx < 0:
                 default_idx = 0
-            return (default_idx, monitor)
+            return LoopbackResult(device_index=default_idx, monitor_name=monitor)
 
     return None
 
 
 def list_audio_devices() -> None:
     """Print available audio input devices."""
+    if sys.platform == "darwin":
+        from nuphy_rgb.coreaudio_tap import is_available
+
+        if is_available():
+            print("CoreAudio Process Tap: available (system audio, no extra setup)")
+        else:
+            print("CoreAudio Process Tap: unavailable (macOS 14.2+ required)")
     print("Audio input devices:")
     for i, d in enumerate(sd.query_devices()):
         if d["max_input_channels"] > 0:
-            if "BlackHole" in d["name"]:
-                marker = " <-- BlackHole"
-            elif sys.platform.startswith("linux") and d["name"].lower().startswith(
+            if sys.platform.startswith("linux") and d["name"].lower().startswith(
                 "monitor of "
             ):
                 marker = " <-- monitor source"
