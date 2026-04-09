@@ -289,7 +289,7 @@ class _FakeSideWithParams:
     def __init__(self):
         self.params = {
             "brightness": VisualizerParam(
-                value=1.0, default=1.0, min=0.0, max=1.0,
+                value=0.1, default=0.1, min=0.0, max=1.0,
                 description="Brightness",
             ),
         }
@@ -402,7 +402,7 @@ class TestGetSideParams:
         })
         result = resp["result"]
         assert "brightness" in result
-        assert result["brightness"]["value"] == 1.0
+        assert result["brightness"]["value"] == 0.1
 
 
 class TestSetSideParam:

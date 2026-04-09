@@ -34,7 +34,7 @@ class ChordGlow:
         self._beat_flash: float = 0.0
         self.params: dict[str, VisualizerParam] = {
             "brightness": VisualizerParam(
-                value=1.0, default=1.0, min=0.0, max=1.0,
+                value=0.1, default=0.1, min=0.0, max=1.0,
                 description="Overall brightness multiplier",
             ),
         }
