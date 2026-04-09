@@ -5,6 +5,7 @@ import logging
 import sys
 import time
 from contextlib import ExitStack
+from importlib.metadata import version as pkg_version
 from pathlib import Path
 
 import hid
@@ -303,6 +304,10 @@ def run(
 
 def main():
     parser = argparse.ArgumentParser(description="NuPhy Air75 V2 music-reactive RGB")
+    parser.add_argument(
+        "--version", action="version",
+        version=f"%(prog)s {pkg_version('nuphy-rgb')}",
+    )
     parser.add_argument(
         "--audio-device",
         type=int,
