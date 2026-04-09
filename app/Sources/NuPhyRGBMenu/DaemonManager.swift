@@ -1,0 +1,118 @@
+import Foundation
+
+/// Manages the lifecycle of the `nuphy-rgb` daemon process.
+@MainActor
+final class DaemonManager {
+    enum State: Sendable {
+        case stopped
+        case starting
+        case running
+        case stopping
+    }
+
+    private(set) var state: State = .stopped
+    private var process: Process?
+    private var socketPath: String?
+
+    /// Start the daemon. Parses stdout for the IPC socket path.
+    func start() throws {
+        guard state == .stopped else { return }
+        state = .starting
+
+        let proc = Process()
+        // Resolve daemon binary: use `uv run` from the project directory
+        // (works in development; bundled .app will use embedded PyInstaller binary)
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        proc.arguments = ["uv", "run", "nuphy-rgb"]
+        proc.currentDirectoryURL = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // NuPhyRGBMenu/
+            .deletingLastPathComponent()  // Sources/
+            .deletingLastPathComponent()  // app/
+            .deletingLastPathComponent()  // project root
+        print("[DaemonMgr] cwd: \(proc.currentDirectoryURL?.path ?? "nil")")
+
+        let stdoutPipe = Pipe()
+        let stderrPipe = Pipe()
+        proc.standardOutput = stdoutPipe
+        proc.standardError = stderrPipe
+
+        proc.terminationHandler = { [weak self] proc in
+            let code = proc.terminationStatus
+            Task { @MainActor in
+                print("[DaemonMgr] daemon exited (code=\(code))")
+                self?.handleTermination()
+            }
+        }
+
+        try proc.run()
+        process = proc
+        state = .running
+        print("[DaemonMgr] started daemon (pid=\(proc.processIdentifier))")
+
+        // Log stderr continuously in background
+        let errHandle = stderrPipe.fileHandleForReading
+        Task.detached {
+            for try await line in errHandle.bytes.lines {
+                print("[DaemonMgr] stderr: \(line)")
+            }
+        }
+
+        // Parse stdout continuously for socket path
+        let outHandle = stdoutPipe.fileHandleForReading
+        Task.detached { [weak self] in
+            for try await line in outHandle.bytes.lines {
+                print("[DaemonMgr] stdout: \(line)")
+                if line.contains("IPC:") {
+                    let path = line.components(separatedBy: "IPC:").last?
+                        .trimmingCharacters(in: .whitespaces) ?? ""
+                    if !path.isEmpty {
+                        // Can't send self across isolation boundaries in Swift 6;
+                        // capture the path and let the caller set it via a callback.
+                        await self?.setSocketPath(path)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Stop the daemon via the IPC `quit` command, with a Process.terminate fallback.
+    func stop(via client: DaemonClient) async {
+        guard state == .running else { return }
+        state = .stopping
+
+        do {
+            try await client.quit()
+            try await Task.sleep(for: .seconds(1))
+        } catch {}
+
+        if let proc = process, proc.isRunning {
+            proc.terminate()
+        }
+
+        cleanup()
+    }
+
+    /// The discovered socket path (from daemon stdout), or the default.
+    var effectiveSocketPath: String {
+        socketPath ?? DaemonClient.defaultSocketPath()
+    }
+
+    /// Check if a daemon is already running (socket probe).
+    nonisolated func detectRunning() -> Bool {
+        DaemonClient.probe()
+    }
+
+    private func setSocketPath(_ path: String) {
+        socketPath = path
+    }
+
+    private func handleTermination() {
+        cleanup()
+    }
+
+    private func cleanup() {
+        process = nil
+        socketPath = nil
+        state = .stopped
+    }
+}
