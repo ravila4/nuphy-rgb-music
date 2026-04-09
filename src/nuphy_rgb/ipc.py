@@ -14,6 +14,7 @@ Socket path:
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -178,6 +179,7 @@ class _ClientHandler(socketserver.StreamRequestHandler):
 
     def setup(self) -> None:
         super().setup()
+        self._write_lock = threading.Lock()
         self.server.ipc.register_client(self)
 
     def finish(self) -> None:
@@ -230,8 +232,9 @@ class _ClientHandler(socketserver.StreamRequestHandler):
 
     def _send(self, msg: dict) -> None:
         try:
-            self.wfile.write(json.dumps(msg).encode() + b"\n")
-            self.wfile.flush()
+            with self._write_lock:
+                self.wfile.write(json.dumps(msg).encode() + b"\n")
+                self.wfile.flush()
         except OSError:
             pass
 
@@ -269,6 +272,7 @@ class IPCServer:
         self._clients_lock = threading.Lock()
         self._server: _IPCSocketServer | None = None
         self._thread: threading.Thread | None = None
+        self._sock_path: Path | None = None
 
     def start(self) -> Path:
         """Bind the socket and start the server thread. Returns socket path."""
@@ -281,6 +285,7 @@ class IPCServer:
 
         self._server = _IPCSocketServer(str(sock_path), _ClientHandler)
         self._server.ipc = self
+        self._sock_path = sock_path
         self._thread = threading.Thread(
             target=self._server.serve_forever, daemon=True
         )
@@ -294,7 +299,9 @@ class IPCServer:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
             try:
                 probe.connect(str(sock_path))
-            except (ConnectionRefusedError, OSError):
+            except OSError as exc:
+                if exc.errno not in (errno.ECONNREFUSED, errno.ENOENT):
+                    raise
                 log.debug("Removing stale socket: %s", sock_path)
                 sock_path.unlink()
                 return
@@ -306,9 +313,8 @@ class IPCServer:
         """Shut down the server and clean up the socket file."""
         if self._server is not None:
             self._server.shutdown()
-            sock_path = control_socket_path()
-            if sock_path.exists():
-                sock_path.unlink()
+            if self._sock_path is not None and self._sock_path.exists():
+                self._sock_path.unlink()
             log.debug("IPC server stopped")
 
     def register_client(self, handler: _ClientHandler) -> None:

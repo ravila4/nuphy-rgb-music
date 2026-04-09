@@ -1,7 +1,10 @@
 """Tests for the IPC socket server."""
 
 import json
+import shutil
 import socket
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -19,16 +22,30 @@ def state():
     )
 
 
+def _short_sock_dir() -> Path:
+    """Create a short temp directory that stays within macOS's 104-byte
+    sun_path limit (pytest's tmp_path includes the full test name and
+    exceeds it on Darwin)."""
+    return Path(tempfile.mkdtemp(prefix="nrgb-"))
+
+
 @pytest.fixture()
-def server(state, tmp_path, monkeypatch):
-    """Start an IPC server on a temp socket and yield it."""
-    sock_path = tmp_path / "control.sock"
+def sock_dir():
+    d = _short_sock_dir()
+    yield d
+    shutil.rmtree(d, ignore_errors=True)
+
+
+@pytest.fixture()
+def server(state, sock_dir, monkeypatch):
+    """Start an IPC server on a temp socket and yield (server, sock_path)."""
+    sock_path = sock_dir / "ctl.sock"
     monkeypatch.setattr(
         "nuphy_rgb.ipc.control_socket_path", lambda: sock_path
     )
     srv = IPCServer(state)
     srv.start()
-    yield srv
+    yield srv, sock_path
     srv.stop()
 
 
@@ -48,25 +65,28 @@ def _send(sock_path, request: dict) -> dict:
 
 
 class TestGetStatus:
-    def test_returns_current_effect(self, server, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_returns_current_effect(self, server) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "get_status", "id": 1,
         })
         assert resp["result"]["effect"] == "Alpha"
         assert resp["result"]["sidelight"] == "Pulse"
         assert resp["result"]["running"] is True
 
-    def test_running_false_after_quit(self, server, state, tmp_path) -> None:
+    def test_running_false_after_quit(self, server, state) -> None:
+        srv, sock_path = server
         state.request_quit()
-        resp = _send(tmp_path / "control.sock", {
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "get_status", "id": 1,
         })
         assert resp["result"]["running"] is False
 
 
 class TestListEffects:
-    def test_returns_all_names(self, server, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_returns_all_names(self, server) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "list_effects", "id": 1,
         })
         assert resp["result"]["effects"] == ["Alpha", "Beta", "Gamma"]
@@ -74,24 +94,27 @@ class TestListEffects:
 
 
 class TestSetEffect:
-    def test_set_by_name(self, server, state, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_set_by_name(self, server, state) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "set_effect",
             "params": {"name": "Beta"}, "id": 1,
         })
         assert resp["result"]["name"] == "Beta"
         assert state.key.index == 1
 
-    def test_unknown_effect_returns_error(self, server, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_unknown_effect_returns_error(self, server) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "set_effect",
             "params": {"name": "Nope"}, "id": 1,
         })
         assert "error" in resp
         assert "unknown effect" in resp["error"]["message"]
 
-    def test_missing_param_returns_error(self, server, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_missing_param_returns_error(self, server) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "set_effect", "id": 1,
         })
         assert "error" in resp
@@ -99,30 +122,34 @@ class TestSetEffect:
 
 
 class TestNextPrev:
-    def test_next_effect(self, server, state, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_next_effect(self, server, state) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "next_effect", "id": 1,
         })
         assert resp["result"]["name"] == "Beta"
         assert state.key.index == 1
 
-    def test_prev_effect_wraps(self, server, state, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_prev_effect_wraps(self, server, state) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "prev_effect", "id": 1,
         })
         assert resp["result"]["name"] == "Gamma"
         assert state.key.index == 2
 
-    def test_next_sidelight(self, server, state, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_next_sidelight(self, server, state) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "next_sidelight", "id": 1,
         })
         assert resp["result"]["name"] == "Wave"
 
 
 class TestQuit:
-    def test_quit_sets_event(self, server, state, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_quit_sets_event(self, server, state) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "quit", "id": 1,
         })
         assert resp["result"]["ok"] is True
@@ -130,23 +157,26 @@ class TestQuit:
 
 
 class TestErrorHandling:
-    def test_unknown_method(self, server, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_unknown_method(self, server) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "jsonrpc": "2.0", "method": "nonexistent", "id": 1,
         })
         assert resp["error"]["code"] == -32601
 
-    def test_malformed_json(self, server, tmp_path) -> None:
+    def test_malformed_json(self, server) -> None:
+        srv, sock_path = server
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        s.connect(str(tmp_path / "control.sock"))
+        s.connect(str(sock_path))
         s.sendall(b"not json\n")
         data = s.recv(4096)
         s.close()
         resp = json.loads(data)
         assert resp["error"]["code"] == -32700
 
-    def test_missing_jsonrpc_version(self, server, tmp_path) -> None:
-        resp = _send(tmp_path / "control.sock", {
+    def test_missing_jsonrpc_version(self, server) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
             "method": "get_status", "id": 1,
         })
         assert resp["error"]["code"] == -32600
@@ -154,8 +184,8 @@ class TestErrorHandling:
 
 
 class TestStaleSockets:
-    def test_removes_stale_socket_on_start(self, state, tmp_path, monkeypatch) -> None:
-        sock_path = tmp_path / "control.sock"
+    def test_removes_stale_socket_on_start(self, state, sock_dir, monkeypatch) -> None:
+        sock_path = sock_dir / "ctl.sock"
         monkeypatch.setattr(
             "nuphy_rgb.ipc.control_socket_path", lambda: sock_path
         )
@@ -172,9 +202,9 @@ class TestStaleSockets:
 
 
 class TestNoSidelights:
-    def test_sidelight_methods_error_when_disabled(self, tmp_path, monkeypatch) -> None:
+    def test_sidelight_methods_error_when_disabled(self, sock_dir, monkeypatch) -> None:
         state = DaemonState(2, effect_names=["A", "B"], num_sidelights=0)
-        sock_path = tmp_path / "control.sock"
+        sock_path = sock_dir / "ctl.sock"
         monkeypatch.setattr(
             "nuphy_rgb.ipc.control_socket_path", lambda: sock_path
         )
@@ -196,8 +226,8 @@ class TestNoSidelights:
 
 
 class TestPushNotifications:
-    def test_broadcast_reaches_connected_client(self, server, tmp_path) -> None:
-        sock_path = tmp_path / "control.sock"
+    def test_broadcast_reaches_connected_client(self, server) -> None:
+        srv, sock_path = server
         s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         s.connect(str(sock_path))
         # Send a request to confirm connection is established.
@@ -212,7 +242,7 @@ class TestPushNotifications:
         data = b""
 
         # Trigger a notification from the server.
-        server.notify_effect_changed("Beta")
+        srv.notify_effect_changed("Beta")
 
         # Read the pushed notification.
         s.settimeout(2.0)
