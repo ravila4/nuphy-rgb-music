@@ -17,6 +17,7 @@ from nuphy_rgb.audio_discovery import (
     move_source_output_to_monitor,
 )
 from nuphy_rgb.effects import ALL_EFFECTS
+from nuphy_rgb.ipc import IPCServer
 from nuphy_rgb.hid_utils import (
     SIDE_LED_COUNT,
     KeyboardInfo,
@@ -197,6 +198,11 @@ def run(
                 print(f"Error: unknown sidelight '{sidelight}'. Known: {known}")
                 sys.exit(1)
 
+        # Start IPC server
+        ipc = IPCServer(state)
+        sock_path = ipc.start()
+        print(f"  IPC: {sock_path}")
+
         # Set up audio capture
         audio = AudioCapture(device_index=audio_device)
 
@@ -228,16 +234,18 @@ def run(
                 while not state.quit_event.is_set():
                     t0 = time.monotonic()
 
-                    # Check for effect switch
+                    # Check for effect switch (from IPC)
                     new_idx = state.key.poll_changed()
                     if new_idx is not None:
                         print(f"  Effect: {visualizers[new_idx].name}")
+                        ipc.notify_effect_changed(visualizers[new_idx].name)
 
-                    # Check for sidelight switch
+                    # Check for sidelight switch (from IPC)
                     if state.side is not None:
                         new_side_idx = state.side.poll_changed()
                         if new_side_idx is not None:
                             print(f"  Sidelight: {side_visualizers[new_side_idx].name}")
+                            ipc.notify_sidelight_changed(side_visualizers[new_side_idx].name)
 
                     # Process audio
                     frame = audio.process_latest()
@@ -286,6 +294,7 @@ def run(
                 pass
             finally:
                 audio.stop()
+                ipc.stop()
     finally:
         for dev, _ in devices:
             dev.close()

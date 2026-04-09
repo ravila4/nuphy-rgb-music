@@ -40,6 +40,11 @@ class CyclicIndex:
                 return self._names[self._index]
             return None
 
+    @property
+    def names(self) -> list[str]:
+        """All registered names (empty list if none)."""
+        return list(self._names) if self._names is not None else []
+
     def next(self) -> None:
         """Advance to the next position, wrapping around."""
         with self._lock:
