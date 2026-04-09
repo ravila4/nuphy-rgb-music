@@ -2,11 +2,14 @@ import numpy as np
 import pytest
 
 from nuphy_rgb.audio import (
+    NUM_CHROMA_BINS,
     AudioCapture,
     AudioFrame,
     BeatDetector,
     ExpFilter,
+    build_chroma_filterbank,
     compute_band_energies,
+    compute_chroma,
     compute_dominant_freq,
     compute_onset_strength,
     compute_spectral_flux,
@@ -408,3 +411,135 @@ class TestAudioCapture:
         assert frame2 is not None
         # Both should detect 440Hz
         assert abs(frame2.dominant_freq - 440.0) < 30.0
+
+    @staticmethod
+    def _make_contiguous_chunks(
+        freq_hz: float, num_chunks: int, chunk_size: int = 1024
+    ) -> list[np.ndarray]:
+        """Generate contiguous audio chunks of a pure sine wave.
+
+        Unlike reusing the same chunk, these are sequential samples
+        with no phase discontinuity at chunk boundaries.
+        """
+        t = np.arange(num_chunks * chunk_size) / SAMPLE_RATE
+        signal = np.sin(2 * np.pi * freq_hz * t).astype(np.float32)
+        return [signal[i * chunk_size:(i + 1) * chunk_size] for i in range(num_chunks)]
+
+    def test_chroma_field_exists(self):
+        cap = self._make_capture()
+        chunks = self._make_contiguous_chunks(440.0, 2)
+        for chunk in chunks:
+            cap._queue.put_nowait(chunk)
+            cap.process_latest()
+        frame = cap.process_latest()
+        # process_latest returns None when queue is empty — use last frame
+        cap._queue.put_nowait(chunks[0])
+        frame = cap.process_latest()
+        assert frame is not None
+        assert isinstance(frame.chroma, tuple)
+        assert len(frame.chroma) == NUM_CHROMA_BINS
+        assert all(isinstance(v, float) for v in frame.chroma)
+
+    def test_chroma_is_agc_normalized(self):
+        """Chroma values should be AGC-normalized to [0, 1] range."""
+        cap = self._make_capture()
+        chunks = self._make_contiguous_chunks(440.0, 21)
+        for chunk in chunks:
+            cap._queue.put_nowait(chunk)
+            cap.process_latest()
+        frame = cap.process_latest()
+        # Last process_latest drained the queue, feed one more
+        cap._queue.put_nowait(chunks[0])
+        frame = cap.process_latest()
+        assert frame is not None
+        assert all(0.0 <= c <= 1.01 for c in frame.chroma)
+        assert max(frame.chroma) > 0.9
+        # A440 should dominate the A bin (index 9)
+        assert frame.chroma.index(max(frame.chroma)) == 9
+
+
+class TestBuildChromaFilterbank:
+    def test_shape(self):
+        freqs = np.fft.rfftfreq(FFT_SIZE, 1.0 / SAMPLE_RATE)
+        fb = build_chroma_filterbank(freqs)
+        assert fb.shape == (12, len(freqs))
+
+    def test_rows_sum_to_one(self):
+        freqs = np.fft.rfftfreq(FFT_SIZE, 1.0 / SAMPLE_RATE)
+        fb = build_chroma_filterbank(freqs)
+        row_sums = fb.sum(axis=1)
+        np.testing.assert_allclose(row_sums, 1.0, atol=1e-10)
+
+    def test_all_non_negative(self):
+        freqs = np.fft.rfftfreq(FFT_SIZE, 1.0 / SAMPLE_RATE)
+        fb = build_chroma_filterbank(freqs)
+        assert np.all(fb >= 0.0)
+
+    def test_peak_at_correct_bins(self):
+        """Each chroma row should peak near its pitch class frequency."""
+        freqs = np.fft.rfftfreq(FFT_SIZE, 1.0 / SAMPLE_RATE)
+        # Single octave so each row has one clear Gaussian
+        fb = build_chroma_filterbank(freqs, min_octave=5, max_octave=5)
+        for chroma_idx in range(12):
+            midi = 12 * 6 + chroma_idx  # octave 5: C5=72, C#5=73, ...
+            expected_freq = 440.0 * 2 ** ((midi - 69) / 12.0)
+            peak_bin = np.argmax(fb[chroma_idx])
+            actual_freq = freqs[peak_bin]
+            assert abs(actual_freq - expected_freq) < 30.0, (
+                f"Chroma {chroma_idx}: expected ~{expected_freq:.0f} Hz, "
+                f"got {actual_freq:.0f} Hz"
+            )
+
+    def test_different_octave_ranges(self):
+        freqs = np.fft.rfftfreq(FFT_SIZE, 1.0 / SAMPLE_RATE)
+        fb_narrow = build_chroma_filterbank(freqs, min_octave=4, max_octave=5)
+        fb_wide = build_chroma_filterbank(freqs, min_octave=2, max_octave=7)
+        assert fb_narrow.shape == fb_wide.shape
+        assert np.count_nonzero(fb_wide > 1e-10) >= np.count_nonzero(fb_narrow > 1e-10)
+
+
+class TestComputeChroma:
+    def test_returns_12_floats(self):
+        mags, freqs = _make_sine_fft(440.0)
+        fb = build_chroma_filterbank(freqs)
+        chroma = compute_chroma(mags, fb)
+        assert len(chroma) == 12
+        assert all(isinstance(c, float) for c in chroma)
+
+    def test_a440_lights_up_a_bin(self):
+        """A4 = 440 Hz should produce highest energy in bin 9 (A)."""
+        mags, freqs = _make_sine_fft(440.0)
+        fb = build_chroma_filterbank(freqs)
+        chroma = compute_chroma(mags, fb)
+        a_idx = 9  # C=0, C#=1, ..., A=9
+        assert chroma[a_idx] == max(chroma), (
+            f"A bin ({a_idx}) should be brightest, got argmax={chroma.index(max(chroma))}"
+        )
+
+    def test_c_tone_lights_up_c_bin(self):
+        """C5 = 523.25 Hz should produce highest energy in bin 0 (C)."""
+        mags, freqs = _make_sine_fft(523.25)
+        fb = build_chroma_filterbank(freqs)
+        chroma = compute_chroma(mags, fb)
+        assert chroma[0] == max(chroma)
+
+    def test_silence_returns_zeros(self):
+        mags, freqs = _make_silence_fft()
+        fb = build_chroma_filterbank(freqs)
+        chroma = compute_chroma(mags, fb)
+        assert all(c == 0.0 for c in chroma)
+
+    def test_all_non_negative(self):
+        mags, freqs = _make_sine_fft(440.0)
+        fb = build_chroma_filterbank(freqs)
+        chroma = compute_chroma(mags, fb)
+        assert all(c >= 0.0 for c in chroma)
+
+    def test_louder_signal_gives_higher_energy(self):
+        freqs = np.fft.rfftfreq(FFT_SIZE, 1.0 / SAMPLE_RATE)
+        fb = build_chroma_filterbank(freqs)
+        mags_quiet, _ = _make_sine_fft(440.0, amplitude=0.3)
+        mags_loud, _ = _make_sine_fft(440.0, amplitude=1.0)
+        chroma_quiet = compute_chroma(mags_quiet, fb)
+        chroma_loud = compute_chroma(mags_loud, fb)
+        assert chroma_loud[9] > chroma_quiet[9]
