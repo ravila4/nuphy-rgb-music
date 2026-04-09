@@ -3,6 +3,7 @@
 import math
 
 from nuphy_rgb.audio import AudioFrame, ExpFilter
+from nuphy_rgb.visualizer_params import VisualizerParam
 from nuphy_rgb.sidelights.visualizer import (
     LEFT_BOTTOM_UP,
     LEDS_PER_SIDE,
@@ -28,6 +29,12 @@ class VUMeter:
 
     def __init__(self) -> None:
         self._filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.2)
+        self.params: dict[str, VisualizerParam] = {
+            "brightness": VisualizerParam(
+                value=0.1, default=0.1, min=0.0, max=1.0,
+                description="Overall brightness multiplier",
+            ),
+        }
 
     def render(self, frame: AudioFrame) -> list[tuple[int, int, int]]:
         level = min(self._filter.update(frame.bass), 1.0) * LEDS_PER_SIDE
@@ -43,9 +50,11 @@ class VUMeter:
             else:
                 bar.append((0, 0, 0))
 
+        bright = self.params["brightness"].get()
         colors: list[tuple[int, int, int]] = [(0, 0, 0)] * SIDE_LED_COUNT
-        for pos, color in enumerate(bar):
-            colors[LEFT_BOTTOM_UP[pos]] = color
-            colors[RIGHT_BOTTOM_UP[pos]] = color
+        for pos, (r, g, b) in enumerate(bar):
+            scaled = (int(r * bright), int(g * bright), int(b * bright))
+            colors[LEFT_BOTTOM_UP[pos]] = scaled
+            colors[RIGHT_BOTTOM_UP[pos]] = scaled
 
         return colors

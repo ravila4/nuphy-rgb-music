@@ -1,7 +1,12 @@
 """Daemon state shared between the main loop and IPC handlers."""
 
+from __future__ import annotations
+
 import threading
 from collections.abc import Sequence
+from typing import Any
+
+from nuphy_rgb.visualizer_params import VisualizerParam
 
 
 class CyclicIndex:
@@ -126,6 +131,8 @@ class DaemonState:
         effect_names: Sequence[str] | None = None,
         num_sidelights: int = 0,
         sidelight_names: Sequence[str] | None = None,
+        visualizers: Sequence[Any] = (),
+        side_visualizers: Sequence[Any] = (),
     ) -> None:
         self.key = CyclicIndex(num_effects, names=effect_names)
         self.side: CyclicIndex | None = (
@@ -134,6 +141,54 @@ class DaemonState:
             else None
         )
         self.quit_event = threading.Event()
+        self._visualizers = list(visualizers)
+        self._side_visualizers = list(side_visualizers)
+
+    def _active_effect(self) -> Any | None:
+        """Snapshot the currently active keyboard effect, or None."""
+        if not self._visualizers:
+            return None
+        return self._visualizers[self.key.index]
+
+    def _active_sidelight(self) -> Any | None:
+        """Snapshot the currently active sidelight effect, or None."""
+        if not self._side_visualizers or self.side is None:
+            return None
+        return self._side_visualizers[self.side.index]
+
+    @staticmethod
+    def _get_params(effect: Any | None) -> dict[str, VisualizerParam]:
+        if effect is None:
+            return {}
+        return getattr(effect, "params", {})
+
+    @staticmethod
+    def _set_param(
+        effect: Any | None, name: str, value: float,
+    ) -> VisualizerParam:
+        if effect is None:
+            raise ValueError("no active effect")
+        params = getattr(effect, "params", {})
+        if name not in params:
+            raise ValueError(f"unknown param: {name}")
+        params[name].set(value)
+        return params[name]
+
+    def get_active_params(self) -> dict[str, VisualizerParam]:
+        """Return the params dict for the currently active keyboard effect."""
+        return self._get_params(self._active_effect())
+
+    def set_active_param(self, name: str, value: float) -> VisualizerParam:
+        """Set a param on the active keyboard effect."""
+        return self._set_param(self._active_effect(), name, value)
+
+    def get_active_side_params(self) -> dict[str, VisualizerParam]:
+        """Return the params dict for the currently active sidelight effect."""
+        return self._get_params(self._active_sidelight())
+
+    def set_active_side_param(self, name: str, value: float) -> VisualizerParam:
+        """Set a param on the active sidelight effect."""
+        return self._set_param(self._active_sidelight(), name, value)
 
     def request_quit(self) -> None:
         """Signal the main loop to exit."""

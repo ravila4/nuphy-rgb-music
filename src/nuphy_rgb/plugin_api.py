@@ -33,6 +33,7 @@ from nuphy_rgb.sidelights.visualizer import (
     SideLightVisualizer,
 )
 from nuphy_rgb.visualizer import Visualizer, freq_to_hue
+from nuphy_rgb.visualizer_params import VisualizerParam
 
 __all__ = [
     # Audio
@@ -66,4 +67,6 @@ __all__ = [
     "SideLightVisualizer",
     # Utilities
     "freq_to_hue",
+    # Parameters
+    "VisualizerParam",
 ]

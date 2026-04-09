@@ -11,6 +11,7 @@ overall brightness so quiet passages stay dim.
 import colorsys
 
 from nuphy_rgb.audio import AudioFrame, ExpFilter, NUM_CHROMA_BINS
+from nuphy_rgb.visualizer_params import VisualizerParam
 from nuphy_rgb.sidelights.visualizer import (
     LEFT_BOTTOM_UP,
     LEDS_PER_SIDE,
@@ -28,6 +29,12 @@ class ChromaBars:
 
     def __init__(self) -> None:
         self._amplitude_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.2)
+        self.params: dict[str, VisualizerParam] = {
+            "brightness": VisualizerParam(
+                value=0.1, default=0.1, min=0.0, max=1.0,
+                description="Overall brightness multiplier",
+            ),
+        }
 
     def render(self, frame: AudioFrame) -> list[tuple[int, int, int]]:
         # Amplitude from raw_rms (real dynamic range, not AGC-flattened)
@@ -39,13 +46,14 @@ class ChromaBars:
         if peak < 1e-6:
             return [(0, 0, 0)] * SIDE_LED_COUNT
 
+        bright = self.params["brightness"].get()
         colors: list[tuple[int, int, int]] = [(0, 0, 0)] * SIDE_LED_COUNT
 
         for i in range(NUM_CHROMA_BINS):
             relative = frame.chroma[i] / peak
             visible = max(0.0, relative - _CHROMA_FLOOR) / (1.0 - _CHROMA_FLOOR)
             # Cube transform: crushes mid-range, only dominant bins pop
-            brightness = min(1.0, visible ** 3 * amplitude)
+            brightness = min(1.0, visible ** 3 * amplitude) * bright
             if brightness < 0.001:
                 continue
 

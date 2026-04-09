@@ -98,6 +98,10 @@ class _Dispatcher:
             "next_sidelight": self._next_sidelight,
             "prev_sidelight": self._prev_sidelight,
             "quit": self._quit,
+            "get_params": self._get_params,
+            "set_param": self._set_param,
+            "get_side_params": self._get_side_params,
+            "set_side_param": self._set_side_param,
         }
 
     def dispatch(self, method: str, params: dict | None) -> Any:
@@ -159,6 +163,26 @@ class _Dispatcher:
     def _quit(self, _params: dict | None) -> dict:
         self._state.request_quit()
         return {"ok": True}
+
+    def _get_params(self, _params: dict | None) -> dict:
+        active_params = self._state.get_active_params()
+        return {name: p.to_dict() for name, p in active_params.items()}
+
+    def _set_param(self, params: dict | None) -> dict:
+        name = _require_param(params, "name")
+        value = _require_param(params, "value")
+        p = self._state.set_active_param(name, float(value))
+        return {"name": name, "value": p.get()}
+
+    def _get_side_params(self, _params: dict | None) -> dict:
+        active_params = self._state.get_active_side_params()
+        return {name: p.to_dict() for name, p in active_params.items()}
+
+    def _set_side_param(self, params: dict | None) -> dict:
+        name = _require_param(params, "name")
+        value = _require_param(params, "value")
+        p = self._state.set_active_side_param(name, float(value))
+        return {"name": name, "value": p.get()}
 
 
 def _require_param(params: dict | None, key: str) -> Any:
