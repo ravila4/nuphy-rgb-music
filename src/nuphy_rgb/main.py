@@ -8,7 +8,6 @@ from contextlib import ExitStack
 from pathlib import Path
 
 import hid
-from pynput import keyboard
 
 from nuphy_rgb.audio import AudioCapture
 from nuphy_rgb.audio_discovery import (
@@ -34,40 +33,6 @@ from nuphy_rgb.state import DaemonState
 from nuphy_rgb.visualizer import Visualizer
 
 log = logging.getLogger(__name__)
-
-
-
-class _SafeGlobalHotKeys(keyboard.GlobalHotKeys):
-    """GlobalHotKeys that tolerates the macOS/pynput injected-arg bug.
-
-    pynput 1.8.x added an ``injected`` parameter to ``_on_press`` /
-    ``_on_release``, but the Darwin backend sometimes calls them *without*
-    it (e.g. media keys).  We normalise by defaulting ``injected=False``
-    when the argument is missing.
-    """
-
-    def _on_press(self, key, injected=False):  # type: ignore[override]
-        return super()._on_press(key, injected)
-
-    def _on_release(self, key, injected=False):  # type: ignore[override]
-        return super()._on_release(key, injected)
-
-
-def _start_hotkey_listener(state: DaemonState) -> _SafeGlobalHotKeys:
-    """Start a pynput global hotkey listener (runs in a daemon thread)."""
-    hotkey_map = {
-        "<ctrl>+<shift>+<right>": state.key.next,
-        "<ctrl>+<shift>+<left>": state.key.prev,
-        "<ctrl>+<shift>+q": state.request_quit,
-    }
-    if state.side is not None:
-        hotkey_map["<ctrl>+<shift>+<up>"] = state.side.next
-        hotkey_map["<ctrl>+<shift>+<down>"] = state.side.prev
-    hotkeys = _SafeGlobalHotKeys(hotkey_map)
-    hotkeys.daemon = True
-    hotkeys.start()
-    return hotkeys
-
 
 
 def _open_keyboards(
@@ -231,13 +196,6 @@ def run(
                 print(f"Error: unknown sidelight '{sidelight}'. Known: {known}")
                 sys.exit(1)
 
-        try:
-            listener = _start_hotkey_listener(state)
-        except Exception:
-            log.debug("Hotkey listener failed to start", exc_info=True)
-            listener = None
-            print("  Hotkeys unavailable (Wayland?). Use --effect/--sidelight flags.")
-
         # Set up audio capture
         audio = AudioCapture(device_index=audio_device)
 
@@ -248,9 +206,6 @@ def run(
         )
         if state.side is not None:
             print(f"  Sidelight: {side_visualizers[state.side.index].name}")
-        print("  Ctrl+Shift+Right/Left = cycle effects | Ctrl+Shift+Q = quit")
-        if state.side is not None:
-            print("  Ctrl+Shift+Up/Down = cycle sidelights")
         if debug:
             print("  Debug mode: Ctrl+C also quits\n")
 
@@ -330,8 +285,6 @@ def run(
                 pass
             finally:
                 audio.stop()
-                if listener is not None:
-                    listener.stop()
     finally:
         for dev, _ in devices:
             dev.close()
