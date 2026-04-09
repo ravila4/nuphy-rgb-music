@@ -237,17 +237,18 @@ def run(
                 try:
                     stack.enter_context(tap)
                     audio = AudioCapture(external_queue=tap.queue)
-                except PermissionError:
-                    log.warning(
-                        "CoreAudio tap: permission denied. "
-                        "Grant 'Screen & System Audio Recording' in System Settings."
-                    )
-                    tap = None
                 except Exception:
-                    log.warning("CoreAudio tap failed", exc_info=True)
-                    tap = None
-
-            if tap is None:
+                    log.warning(
+                        "CoreAudio tap failed. "
+                        "Grant 'Screen & System Audio Recording' in System Settings.",
+                        exc_info=True,
+                    )
+                    print(
+                        "Error: CoreAudio tap failed. Check 'Screen & System Audio"
+                        " Recording' in System Settings > Privacy & Security."
+                    )
+                    sys.exit(1)
+            else:
                 audio = AudioCapture(device_index=audio_device)
 
             audio.start()

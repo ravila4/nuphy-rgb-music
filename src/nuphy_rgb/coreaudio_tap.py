@@ -301,4 +301,7 @@ class ProcessTap:
         self.stop()
 
     def __del__(self) -> None:
-        self.stop()
+        try:
+            self.stop()
+        except Exception:
+            pass  # imports may fail during interpreter shutdown
