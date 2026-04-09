@@ -15,6 +15,7 @@ HIGH_LOW, HIGH_HIGH = 2000, 16000
 
 
 NUM_SPECTRUM_BINS = 16
+NUM_CHROMA_BINS = 12
 
 
 @dataclass(frozen=True)
@@ -34,6 +35,7 @@ class AudioFrame:
     mid_beat: bool = False
     high_beat: bool = False
     spectrum: tuple[float, ...] = (0.0,) * NUM_SPECTRUM_BINS
+    chroma: tuple[float, ...] = (0.0,) * NUM_CHROMA_BINS
 
 
 class ExpFilter:
@@ -119,6 +121,60 @@ def compute_spectrum_bins(
 
 
 
+def build_chroma_filterbank(
+    freqs: np.ndarray,
+    min_octave: int = 2,
+    max_octave: int = 7,
+) -> np.ndarray:
+    """Build a 12 x len(freqs) Gaussian filterbank for chroma extraction.
+
+    Each row = one pitch class (C, C#, D, ..., B), with Gaussians summed
+    across octaves. Uses constant-Q sigma (half-semitone) with a floor
+    of 1.0 bin widths for low-frequency robustness.
+
+    freqs must be a linearly-spaced rfftfreq array starting at 0.
+    """
+    n_bins = len(freqs)
+    filterbank = np.zeros((NUM_CHROMA_BINS, n_bins), dtype=np.float64)
+    freq_resolution = float(freqs[1] - freqs[0])
+    bin_indices = np.arange(n_bins)
+
+    for chroma_idx in range(NUM_CHROMA_BINS):
+        for octave in range(min_octave, max_octave + 1):
+            midi = 12 * (octave + 1) + chroma_idx
+            center_hz = 440.0 * 2.0 ** ((midi - 69) / 12.0)
+
+            sigma_hz = center_hz * (2.0 ** (1.0 / 24.0) - 1.0)
+            sigma_bins = max(sigma_hz / freq_resolution, 1.0)
+
+            center_bin = center_hz / freq_resolution
+            gaussian = np.exp(-0.5 * ((bin_indices - center_bin) / sigma_bins) ** 2)
+            filterbank[chroma_idx] += gaussian
+
+    row_sums = filterbank.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1.0
+    filterbank /= row_sums
+
+    return filterbank
+
+
+def compute_chroma(
+    magnitudes: np.ndarray,
+    filterbank: np.ndarray,
+) -> list[float]:
+    """Compute 12-bin chromagram from FFT magnitudes.
+
+    Accepts raw FFT magnitudes; squaring to power spectrum is applied
+    internally. Do not pre-square the input.
+
+    Returns pitch-class energy (C, C#, D, ..., B) as weighted sum
+    of power spectrum through the Gaussian filterbank.
+    """
+    power = magnitudes ** 2
+    chroma = filterbank @ power
+    return chroma.tolist()
+
+
 def compute_onset_strength(rms: float, prev_rms: float) -> float:
     """Onset strength as positive RMS delta. Zero on steady or declining signal."""
     delta = rms - prev_rms
@@ -201,6 +257,11 @@ class AudioCapture:
         self._peak_energy: float = 0.0
         self._rms_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
         self._peak_rms: float = 0.0
+        self._chroma_filterbank = build_chroma_filterbank(self._freqs)
+        self._peak_chroma: float = 0.0
+        self._chroma_filters = [
+            ExpFilter(alpha_rise=0.6, alpha_decay=0.1) for _ in range(NUM_CHROMA_BINS)
+        ]
         self._stream: sd.InputStream | None = None
 
     def _callback(
@@ -297,6 +358,16 @@ class AudioCapture:
         raw_bins = compute_spectrum_bins(magnitudes, self._freqs)
         spectrum = tuple(b * scale for b in raw_bins)
 
+        # Chroma (AGC + ExpFilter smoothing, like band energies)
+        raw_chroma = compute_chroma(magnitudes, self._chroma_filterbank)
+        max_chroma = max(raw_chroma)
+        self._peak_chroma = max(max_chroma, self._peak_chroma * 0.995)
+        chroma_scale = 1.0 / (self._peak_chroma + 1e-10)
+        chroma = tuple(
+            self._chroma_filters[i].update(raw_chroma[i] * chroma_scale)
+            for i in range(NUM_CHROMA_BINS)
+        )
+
         return AudioFrame(
             bass=bass,
             mids=mids,
@@ -311,4 +382,5 @@ class AudioCapture:
             mid_beat=mid_beat,
             high_beat=high_beat,
             spectrum=spectrum,
+            chroma=chroma,
         )

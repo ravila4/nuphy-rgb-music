@@ -6,7 +6,7 @@ effect as a plugin, everything you need is re-exported from this module::
     from nuphy_rgb.plugin_api import AudioFrame, NUM_LEDS, grid_to_leds
 """
 
-from nuphy_rgb.audio import AudioFrame, ExpFilter
+from nuphy_rgb.audio import AudioFrame, ExpFilter, NUM_CHROMA_BINS
 from nuphy_rgb.effects.grid import (
     LED_ROW_COL,
     LED_X,
@@ -38,6 +38,7 @@ __all__ = [
     # Audio
     "AudioFrame",
     "ExpFilter",
+    "NUM_CHROMA_BINS",
     # Keyboard grid
     "NUM_LEDS",
     "NUM_ROWS",
