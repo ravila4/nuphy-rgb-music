@@ -1,10 +1,10 @@
-"""Tests for CyclicIndex."""
+"""Tests for CyclicIndex and DaemonState."""
 
 import threading
 
 import pytest
 
-from nuphy_rgb.state import CyclicIndex
+from nuphy_rgb.state import CyclicIndex, DaemonState
 
 
 # ---------------------------------------------------------------------------
@@ -189,3 +189,35 @@ class TestCyclicIndexCountGuard:
     def test_negative_count_raises(self) -> None:
         with pytest.raises(ValueError):
             CyclicIndex(-1)
+
+
+# ---------------------------------------------------------------------------
+# DaemonState
+# ---------------------------------------------------------------------------
+
+
+class TestDaemonStateQuit:
+    def test_quit_event_starts_unset(self) -> None:
+        state = DaemonState(3)
+        assert not state.quit_event.is_set()
+
+    def test_request_quit_sets_event(self) -> None:
+        state = DaemonState(3)
+        state.request_quit()
+        assert state.quit_event.is_set()
+
+
+class TestDaemonStateSidelights:
+    def test_side_is_none_when_no_sidelights(self) -> None:
+        state = DaemonState(3, num_sidelights=0)
+        assert state.side is None
+
+    def test_side_is_cyclic_index_when_sidelights(self) -> None:
+        state = DaemonState(3, num_sidelights=2, sidelight_names=["A", "B"])
+        assert isinstance(state.side, CyclicIndex)
+        assert state.side.index == 0
+
+    def test_effect_names_forwarded_to_key(self) -> None:
+        state = DaemonState(2, effect_names=["Foo", "Bar"])
+        assert state.key.set_by_name("bar")
+        assert state.key.index == 1

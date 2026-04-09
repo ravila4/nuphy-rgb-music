@@ -69,7 +69,7 @@ def move_source_output_to_monitor(monitor_name: str) -> None:
         stripped = line.strip()
         if stripped.startswith("Source Output #"):
             current_index = stripped.split("#")[1]
-        elif "application.process.id" in stripped and pid in stripped:
+        elif "application.process.id" in stripped and f'= "{pid}"' in stripped:
             if current_index is not None:
                 try:
                     subprocess.check_call(

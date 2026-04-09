@@ -8,6 +8,7 @@ from contextlib import ExitStack
 from pathlib import Path
 
 import hid
+import sounddevice as sd
 
 from nuphy_rgb.audio import AudioCapture
 from nuphy_rgb.audio_discovery import (

@@ -1,7 +1,7 @@
 """Daemon state shared between the main loop and IPC handlers."""
 
 import threading
-from typing import Sequence
+from collections.abc import Sequence
 
 
 class CyclicIndex:
@@ -61,6 +61,7 @@ class CyclicIndex:
         Raises:
             ValueError: If index is out of range.
         """
+        # _count is immutable post-init, safe to read without lock.
         if index < 0 or index >= self._count:
             raise ValueError(f"index {index} out of range [0, {self._count})")
         with self._lock:
@@ -84,12 +85,12 @@ class CyclicIndex:
                 "CyclicIndex was created without names; cannot use set_by_name()"
             )
         needle = name.lower()
-        for i, n in enumerate(self._names):
-            if n.lower() == needle:
-                with self._lock:
+        with self._lock:
+            for i, n in enumerate(self._names):
+                if n.lower() == needle:
                     self._index = i
                     self._changed = True
-                return True
+                    return True
         return False
 
     def poll_changed(self) -> int | None:
