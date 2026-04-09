@@ -96,10 +96,15 @@ uv sync
 
 #### macOS
 
-System audio capture uses the CoreAudio Process Tap API (macOS 14.2+). On
-first run, macOS will prompt you to grant **Screen & System Audio Recording**
-permission to your terminal app. No extra software needed — volume keys and
-audio routing work normally.
+System audio capture uses the CoreAudio Process Tap API (macOS 14.2+).
+The app that runs `nuphy-rgb` needs **Screen & System Audio Recording**
+permission: your terminal (Ghostty, iTerm2, Terminal.app, etc.) when
+running from the command line, or the packaged app itself.
+
+Grant it in **System Settings \> Privacy & Security \> Screen & System
+Audio Recording**. You may need to restart the app after granting.
+
+No extra audio software needed. Volume keys and audio routing work normally.
 
 #### Linux
 
