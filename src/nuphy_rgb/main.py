@@ -2,6 +2,8 @@
 
 import argparse
 import logging
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -101,7 +103,9 @@ class _CyclicIndex:
             ValueError: If this instance was created without names.
         """
         if self._names is None:
-            raise ValueError("_CyclicIndex was created without names; cannot use set_by_name()")
+            raise ValueError(
+                "_CyclicIndex was created without names; cannot use set_by_name()"
+            )
         needle = name.lower()
         for i, n in enumerate(self._names):
             if n.lower() == needle:
@@ -179,7 +183,6 @@ class _HotkeyState:
             self._quit = True
 
 
-
 class _SafeGlobalHotKeys(keyboard.GlobalHotKeys):
     """GlobalHotKeys that tolerates the macOS/pynput injected-arg bug.
 
@@ -212,11 +215,116 @@ def _start_hotkey_listener(state: _HotkeyState) -> _SafeGlobalHotKeys:
     return hotkeys
 
 
-def find_blackhole_device() -> int | None:
-    """Find the BlackHole audio device index."""
+def _find_pactl_monitor() -> str | None:
+    """Find a PulseAudio/PipeWire monitor source name via ``pactl``.
+
+    Prefers the monitor of the default sink (what the user is hearing).
+    Falls back to any ``.monitor`` source.
+    """
+    try:
+        default_sink = subprocess.check_output(
+            ["pactl", "get-default-sink"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        default_sink = None
+
+    try:
+        out = subprocess.check_output(
+            ["pactl", "list", "sources", "short"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return None
+
+    fallback: str | None = None
+    for line in out.splitlines():
+        fields = line.split("\t")
+        if len(fields) >= 2 and fields[1].endswith(".monitor"):
+            if default_sink and fields[1] == f"{default_sink}.monitor":
+                return fields[1]
+            if fallback is None:
+                fallback = fields[1]
+    return fallback
+
+
+def _move_source_output_to_monitor(monitor_name: str) -> None:
+    """Redirect our own PulseAudio/PipeWire capture stream to *monitor_name*.
+
+    Must be called after the ``sounddevice`` stream has been opened so that a
+    source-output exists.  Finds the source-output belonging to our PID and
+    moves it with ``pactl move-source-output``.
+    """
+    pid = str(os.getpid())
+    try:
+        out = subprocess.check_output(
+            ["pactl", "list", "source-outputs"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        log.debug("pactl list source-outputs failed")
+        return
+
+    # Parse source-output blocks to find ours by PID.
+    current_index: str | None = None
+    for line in out.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("Source Output #"):
+            current_index = stripped.split("#")[1]
+        elif "application.process.id" in stripped and pid in stripped:
+            if current_index is not None:
+                try:
+                    subprocess.check_call(
+                        ["pactl", "move-source-output", current_index, monitor_name],
+                        stderr=subprocess.DEVNULL,
+                    )
+                    log.debug(
+                        "Moved source-output %s -> %s", current_index, monitor_name
+                    )
+                except subprocess.CalledProcessError:
+                    log.warning(
+                        "Failed to move source-output %s to %s",
+                        current_index,
+                        monitor_name,
+                    )
+                return
+
+    log.debug("No source-output found for PID %s", pid)
+
+
+def find_loopback_device() -> tuple[int, str | None] | None:
+    """Find a system-audio loopback device.
+
+    macOS: BlackHole virtual audio device.
+    Linux: PulseAudio/PipeWire monitor source (via sounddevice or pactl).
+
+    Returns ``(device_index, monitor_name)`` where *monitor_name* is set only
+    when the device needs per-app routing via ``pactl move-source-output``
+    after the stream is opened.  Returns ``None`` when no device is found.
+    """
     for i, d in enumerate(sd.query_devices()):
-        if "BlackHole" in d["name"] and d["max_input_channels"] > 0:
-            return i
+        if d["max_input_channels"] <= 0:
+            continue
+        name = d["name"]
+        if "BlackHole" in name:
+            return (i, None)
+        if sys.platform.startswith("linux") and name.lower().startswith("monitor of "):
+            return (i, None)
+
+    # On Linux, PortAudio often lacks a PulseAudio backend so monitor sources
+    # are invisible.  Fall back to pactl detection + per-app stream routing.
+    if sys.platform.startswith("linux"):
+        monitor = _find_pactl_monitor()
+        if monitor is not None:
+            # Use the "default" ALSA device; we'll reroute our stream after open.
+            default_idx = sd.default.device[0]
+            if default_idx is None or default_idx < 0:
+                default_idx = 0
+            return (default_idx, monitor)
+
     return None
 
 
@@ -225,26 +333,47 @@ def list_audio_devices() -> None:
     print("Audio input devices:")
     for i, d in enumerate(sd.query_devices()):
         if d["max_input_channels"] > 0:
-            marker = " <-- BlackHole" if "BlackHole" in d["name"] else ""
+            if "BlackHole" in d["name"]:
+                marker = " <-- BlackHole"
+            elif sys.platform.startswith("linux") and d["name"].lower().startswith(
+                "monitor of "
+            ):
+                marker = " <-- monitor source"
+            else:
+                marker = ""
             print(f"  {i}: {d['name']} ({d['max_input_channels']}ch){marker}")
+    if sys.platform.startswith("linux"):
+        monitor = _find_pactl_monitor()
+        if monitor:
+            print(f"\n  PipeWire/PulseAudio monitor: {monitor}")
+            print("  (Auto-detected — will be routed at runtime via pactl)")
 
 
 def _open_keyboards(
     infos: list[KeyboardInfo],
-) -> list[tuple[KeyboardInfo, hid.device, int]]:
-    """Open HID devices and probe each. Returns (info, device, led_count) triples."""
+) -> tuple[list[tuple[KeyboardInfo, hid.device, int]], bool]:
+    """Open HID devices and probe each.
+
+    Returns ``(opened, permission_denied)`` where *opened* is a list of
+    ``(info, device, led_count)`` triples and *permission_denied* is True
+    if any device failed to open due to OS permissions.
+    """
     opened: list[tuple[KeyboardInfo, hid.device, int]] = []
+    permission_denied = False
     for info in infos:
         device = hid.device()
-        device.open_path(info.path)
+        try:
+            device.open_path(info.path)
+        except OSError:
+            permission_denied = True
+            continue
         led_count = probe(device)
         if led_count is None:
-            print(f"  Keyboard {info.index} ({info.serial[-8:]}): handshake failed, skipping")
             device.close()
             continue
         print(f"  Keyboard {info.index}: {info.serial[-8:]} — {led_count} LEDs")
         opened.append((info, device, led_count))
-    return opened
+    return opened, permission_denied
 
 
 def list_keyboards() -> None:
@@ -278,14 +407,28 @@ def run(
     sidelight: str | None = None,
     config_dir: Path | None = None,
 ) -> None:
+    if debug:
+        logging.basicConfig(level=logging.DEBUG, format="%(name)s: %(message)s")
+
     # Find audio device
+    monitor_name: str | None = None
     if audio_device is None:
-        audio_device = find_blackhole_device()
-        if audio_device is None:
-            print("BlackHole not found. Install with: brew install blackhole-2ch")
-            print("Use --list-audio to see available inputs, --audio-device to specify.")
+        result = find_loopback_device()
+        if result is None:
+            if sys.platform == "darwin":
+                print("BlackHole not found. Install with: brew install blackhole-2ch")
+            else:
+                print("No monitor source found. Ensure PulseAudio/PipeWire is running.")
+            print(
+                "Use --list-audio to see available inputs, --audio-device to specify."
+            )
             sys.exit(1)
-    print(f"Audio device: {sd.query_devices(audio_device)['name']} (index {audio_device})")
+        audio_device, monitor_name = result
+    print(
+        f"Audio device: {sd.query_devices(audio_device)['name']} (index {audio_device})"
+    )
+    if monitor_name:
+        print(f"  Monitor source: {monitor_name} (will route after stream opens)")
 
     # Find keyboards
     print("Looking for NuPhy keyboards...")
@@ -300,9 +443,18 @@ def run(
         print(f"Error: {e}")
         sys.exit(1)
 
-    boards = _open_keyboards(selected)
+    boards, permission_denied = _open_keyboards(selected)
     if not boards:
-        print("No keyboards passed handshake. Is the custom firmware flashed?")
+        if permission_denied:
+            if sys.platform == "darwin":
+                print("Permission denied — check Input Monitoring in System Settings")
+            else:
+                print("Permission denied — install udev rules:")
+                print("  sudo cp udev/99-nuphy.rules /etc/udev/rules.d/")
+                print("  sudo udevadm control --reload-rules && sudo udevadm trigger")
+                print("Then unplug and replug the keyboard.")
+        else:
+            print("No keyboards passed handshake. Is the custom firmware flashed?")
         sys.exit(1)
 
     devices = [(dev, leds) for _, dev, leds in boards]
@@ -326,7 +478,9 @@ def run(
         # Set up sidelight visualizers (opt-in): built-in + plugins
         if sidelight is not None:
             builtin_side_names = {cls.name for cls in ALL_SIDELIGHTS}
-            plugin_sidelights = _dedupe_plugins(discover_sidelights(config_dir), builtin_side_names)
+            plugin_sidelights = _dedupe_plugins(
+                discover_sidelights(config_dir), builtin_side_names
+            )
             all_sidelight_classes = list(ALL_SIDELIGHTS) + plugin_sidelights
 
             side_visualizers = [cls() for cls in all_sidelight_classes]
@@ -357,16 +511,21 @@ def run(
                 print(f"Error: unknown sidelight '{sidelight}'. Known: {known}")
                 sys.exit(1)
 
-        listener = _start_hotkey_listener(state)
+        try:
+            listener = _start_hotkey_listener(state)
+        except Exception:
+            log.debug("Hotkey listener failed to start", exc_info=True)
+            listener = None
+            print("  Hotkeys unavailable (Wayland?). Use --effect/--sidelight flags.")
 
         # Set up audio capture
         audio = AudioCapture(device_index=audio_device)
 
         frame_period = 1.0 / fps
-        kb_label = (
-            f"{len(devices)} keyboard{'s' if len(devices) > 1 else ''}"
+        kb_label = f"{len(devices)} keyboard{'s' if len(devices) > 1 else ''}"
+        print(
+            f"\nRunning: {visualizers[state.key.index].name} @ {fps}fps on {kb_label}"
         )
-        print(f"\nRunning: {visualizers[state.key.index].name} @ {fps}fps on {kb_label}")
         if state.side is not None:
             print(f"  Sidelight: {side_visualizers[state.side.index].name}")
         print("  Ctrl+Shift+Right/Left = cycle effects | Ctrl+Shift+Q = quit")
@@ -383,6 +542,9 @@ def run(
                     stack.enter_context(side_streaming_mode(dev))
 
             audio.start()
+            if monitor_name:
+                time.sleep(0.1)  # let PipeWire register the source-output
+                _move_source_output_to_monitor(monitor_name)
             try:
                 last_colors = [(0, 0, 0)] * led_count
                 last_side_colors = [(0, 0, 0)] * SIDE_LED_COUNT
@@ -408,14 +570,22 @@ def run(
                             last_colors = visualizers[state.key.index].render(frame)
                         except Exception:
                             name = visualizers[state.key.index].name
-                            log.warning("Effect '%s' crashed, advancing", name, exc_info=True)
+                            log.warning(
+                                "Effect '%s' crashed, advancing", name, exc_info=True
+                            )
                             state.next_effect()
                         if state.side is not None:
                             try:
-                                last_side_colors = side_visualizers[state.side.index].render(frame)
+                                last_side_colors = side_visualizers[
+                                    state.side.index
+                                ].render(frame)
                             except Exception:
                                 name = side_visualizers[state.side.index].name
-                                log.warning("Sidelight '%s' crashed, advancing", name, exc_info=True)
+                                log.warning(
+                                    "Sidelight '%s' crashed, advancing",
+                                    name,
+                                    exc_info=True,
+                                )
                                 state.next_sidelight()
 
                     # Send to all keyboards
@@ -425,7 +595,9 @@ def run(
                             send_side_frame(dev, last_side_colors)
 
                     if debug and frame_count % 30 == 0 and frame is not None:
-                        print(f"  RGB={last_colors[0]} raw_rms={frame.raw_rms:.3f} rms={frame.rms:.3f} bass={frame.bass:.3f} freq={frame.dominant_freq:.0f}Hz beat={frame.is_beat}")
+                        print(
+                            f"  RGB={last_colors[0]} raw_rms={frame.raw_rms:.3f} rms={frame.rms:.3f} bass={frame.bass:.3f} freq={frame.dominant_freq:.0f}Hz beat={frame.is_beat}"
+                        )
 
                     frame_count += 1
 
@@ -438,7 +610,8 @@ def run(
                 pass
             finally:
                 audio.stop()
-                listener.stop()
+                if listener is not None:
+                    listener.stop()
     finally:
         for dev, _ in devices:
             dev.close()
@@ -446,55 +619,71 @@ def run(
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="NuPhy Air75 V2 music-reactive RGB"
+    parser = argparse.ArgumentParser(description="NuPhy Air75 V2 music-reactive RGB")
+    parser.add_argument(
+        "--audio-device",
+        type=int,
+        default=None,
+        help="Audio input device index (default: auto-detect loopback device)",
     )
     parser.add_argument(
-        "--audio-device", type=int, default=None,
-        help="Audio input device index (default: auto-detect BlackHole)",
-    )
-    parser.add_argument(
-        "--fps", type=int, default=30,
+        "--fps",
+        type=int,
+        default=30,
         help="Target frames per second (default: 30)",
     )
     parser.add_argument(
-        "--list-audio", action="store_true",
+        "--list-audio",
+        action="store_true",
         help="List audio input devices and exit",
     )
     parser.add_argument(
-        "--list-keyboards", action="store_true",
+        "--list-keyboards",
+        action="store_true",
         help="List connected NuPhy keyboards and exit",
     )
     parser.add_argument(
-        "--keyboard", type=str, default=None,
+        "--keyboard",
+        type=str,
+        default=None,
         help="Keyboard to drive: index (0, 1) or serial substring. Default: all connected.",
     )
     parser.add_argument(
-        "--debug", action="store_true",
+        "--debug",
+        action="store_true",
         help="Debug mode: prints frame data, Ctrl+C to quit",
     )
     parser.add_argument(
-        "--effect", type=str, default=None,
+        "--effect",
+        type=str,
+        default=None,
         help="Start on a specific effect by name (case-insensitive, e.g. colorwash).",
     )
     parser.add_argument(
-        "--list-effects", action="store_true",
+        "--list-effects",
+        action="store_true",
         help="List available effects and exit.",
     )
     parser.add_argument(
-        "--sidelight", type=str, default="VU Meter",
+        "--sidelight",
+        type=str,
+        default="VU Meter",
         help="Sidelight effect name (default: 'VU Meter').",
     )
     parser.add_argument(
-        "--no-sidelight", action="store_true",
+        "--no-sidelight",
+        action="store_true",
         help="Disable host sidelights (firmware handles them).",
     )
     parser.add_argument(
-        "--list-sidelights", action="store_true",
+        "--list-sidelights",
+        action="store_true",
         help="List available sidelight effects and exit.",
     )
     parser.add_argument(
-        "--effects-dir", type=str, default=None,
+        "--effects-dir",
+        type=str,
+        default=None,
         help="Custom plugin directory (default: ~/.config/nuphy-rgb).",
     )
     args = parser.parse_args()
