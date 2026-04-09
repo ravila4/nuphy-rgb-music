@@ -5,11 +5,9 @@ import logging
 import os
 import subprocess
 import sys
-import threading
 import time
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Sequence
 
 import hid
 import sounddevice as sd
@@ -30,157 +28,11 @@ from nuphy_rgb.hid_utils import (
 from nuphy_rgb.plugins import discover_effects, discover_sidelights
 from nuphy_rgb.probe import probe
 from nuphy_rgb.sidelights import ALL_SIDELIGHTS
+from nuphy_rgb.state import DaemonState
 from nuphy_rgb.visualizer import Visualizer
 
 log = logging.getLogger(__name__)
 
-
-class _CyclicIndex:
-    """Thread-safe cyclic index with an optional named-item registry.
-
-    Tracks a current position within a fixed-size range [0, count) and
-    exposes next/prev/set navigation. A changed flag is set on each mutation
-    and consumed by poll_changed().
-
-    Args:
-        count: Number of positions in the cycle.
-        names: Optional list of names for set_by_name() lookups. Must have
-            exactly ``count`` entries if provided.
-    """
-
-    def __init__(self, count: int, names: Sequence[str] | None = None) -> None:
-        if count <= 0:
-            raise ValueError(f"count must be positive, got {count}")
-        self._lock = threading.Lock()
-        self._count = count
-        self._index = 0
-        self._changed = False
-        self._names: list[str] | None = list(names) if names is not None else None
-
-    @property
-    def index(self) -> int:
-        """Current index (read-only snapshot)."""
-        with self._lock:
-            return self._index
-
-    def next(self) -> None:
-        """Advance to the next position, wrapping around."""
-        with self._lock:
-            self._index = (self._index + 1) % self._count
-            self._changed = True
-
-    def prev(self) -> None:
-        """Move to the previous position, wrapping around."""
-        with self._lock:
-            self._index = (self._index - 1) % self._count
-            self._changed = True
-
-    def set(self, index: int) -> None:
-        """Jump directly to a position.
-
-        Args:
-            index: Target index in [0, count).
-
-        Raises:
-            ValueError: If index is out of range.
-        """
-        if index < 0 or index >= self._count:
-            raise ValueError(f"index {index} out of range [0, {self._count})")
-        with self._lock:
-            self._index = index
-            self._changed = True
-
-    def set_by_name(self, name: str) -> bool:
-        """Jump to the position whose name matches (case-insensitive).
-
-        Args:
-            name: Name to search for.
-
-        Returns:
-            True if found and index was updated; False if not found.
-
-        Raises:
-            ValueError: If this instance was created without names.
-        """
-        if self._names is None:
-            raise ValueError(
-                "_CyclicIndex was created without names; cannot use set_by_name()"
-            )
-        needle = name.lower()
-        for i, n in enumerate(self._names):
-            if n.lower() == needle:
-                with self._lock:
-                    self._index = i
-                    self._changed = True
-                return True
-        return False
-
-    def poll_changed(self) -> int | None:
-        """Return current index if changed since last poll, else None.
-
-        Resets the changed flag.
-        """
-        with self._lock:
-            if self._changed:
-                self._changed = False
-                return self._index
-            return None
-
-
-class _HotkeyState:
-    """Thread-safe state controlled by global hotkeys.
-
-    Args:
-        num_effects: Number of keyboard visualizer effects.
-        effect_names: Names of the keyboard effects for set_by_name() support.
-        num_sidelights: Number of sidelight effects (0 = sidelights disabled).
-        sidelight_names: Names of sidelight effects for set_by_name() support.
-    """
-
-    def __init__(
-        self,
-        num_effects: int,
-        effect_names: Sequence[str] | None = None,
-        num_sidelights: int = 0,
-        sidelight_names: Sequence[str] | None = None,
-    ) -> None:
-        self._lock = threading.Lock()
-        self.key = _CyclicIndex(num_effects, names=effect_names)
-        self.side: _CyclicIndex | None = (
-            _CyclicIndex(num_sidelights, names=sidelight_names)
-            if num_sidelights > 0
-            else None
-        )
-        self._quit = False
-
-    def next_effect(self) -> None:
-        """Advance to the next keyboard effect."""
-        self.key.next()
-
-    def prev_effect(self) -> None:
-        """Move to the previous keyboard effect."""
-        self.key.prev()
-
-    def next_sidelight(self) -> None:
-        """Advance to the next sidelight effect."""
-        if self.side is not None:
-            self.side.next()
-
-    def prev_sidelight(self) -> None:
-        """Move to the previous sidelight effect."""
-        if self.side is not None:
-            self.side.prev()
-
-    @property
-    def quit(self) -> bool:
-        """Whether a quit has been requested (thread-safe read)."""
-        with self._lock:
-            return self._quit
-
-    def request_quit(self) -> None:
-        """Signal the main loop to exit."""
-        with self._lock:
-            self._quit = True
 
 
 class _SafeGlobalHotKeys(keyboard.GlobalHotKeys):
@@ -199,16 +51,16 @@ class _SafeGlobalHotKeys(keyboard.GlobalHotKeys):
         return super()._on_release(key, injected)
 
 
-def _start_hotkey_listener(state: _HotkeyState) -> _SafeGlobalHotKeys:
+def _start_hotkey_listener(state: DaemonState) -> _SafeGlobalHotKeys:
     """Start a pynput global hotkey listener (runs in a daemon thread)."""
     hotkey_map = {
-        "<ctrl>+<shift>+<right>": state.next_effect,
-        "<ctrl>+<shift>+<left>": state.prev_effect,
+        "<ctrl>+<shift>+<right>": state.key.next,
+        "<ctrl>+<shift>+<left>": state.key.prev,
         "<ctrl>+<shift>+q": state.request_quit,
     }
     if state.side is not None:
-        hotkey_map["<ctrl>+<shift>+<up>"] = state.next_sidelight
-        hotkey_map["<ctrl>+<shift>+<down>"] = state.prev_sidelight
+        hotkey_map["<ctrl>+<shift>+<up>"] = state.side.next
+        hotkey_map["<ctrl>+<shift>+<down>"] = state.side.prev
     hotkeys = _SafeGlobalHotKeys(hotkey_map)
     hotkeys.daemon = True
     hotkeys.start()
@@ -489,8 +341,7 @@ def run(
             side_visualizers = []
             sidelight_names = []
 
-        # Set up hotkey listener
-        state = _HotkeyState(
+        state = DaemonState(
             len(visualizers),
             effect_names=effect_names,
             num_sidelights=len(side_visualizers),
@@ -549,7 +400,7 @@ def run(
                 last_colors = [(0, 0, 0)] * led_count
                 last_side_colors = [(0, 0, 0)] * SIDE_LED_COUNT
                 frame_count = 0
-                while not state.quit:
+                while not state.quit_event.is_set():
                     t0 = time.monotonic()
 
                     # Check for effect switch
@@ -573,7 +424,7 @@ def run(
                             log.warning(
                                 "Effect '%s' crashed, advancing", name, exc_info=True
                             )
-                            state.next_effect()
+                            state.key.next()
                         if state.side is not None:
                             try:
                                 last_side_colors = side_visualizers[
@@ -586,7 +437,7 @@ def run(
                                     name,
                                     exc_info=True,
                                 )
-                                state.next_sidelight()
+                                state.side.next()
 
                     # Send to all keyboards
                     for dev, _ in devices:
