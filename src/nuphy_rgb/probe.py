@@ -1,9 +1,12 @@
 """NuPhy Air75 V2 HID probe and LED test utility."""
 
 import argparse
+import logging
 import sys
 
 import hid
+
+log = logging.getLogger(__name__)
 
 from nuphy_rgb.hid_utils import (
     CMD_GET_TOTAL_LEDS,
@@ -19,16 +22,16 @@ def probe(device: hid.device) -> int | None:
     device.write(build_packet(CMD_GET_TOTAL_LEDS))
     resp = device.read(32, timeout_ms=1000)
     if not resp:
-        print("No response (timeout). Firmware handler may not be installed yet.")
+        log.debug("No response (timeout). Firmware handler may not be installed yet.")
         return None
     if resp[0] == 0xFF:
-        print("Got id_unhandled. Firmware handler not installed yet.")
+        log.debug("Got id_unhandled. Firmware handler not installed yet.")
         return None
     if resp[0] == CMD_GET_TOTAL_LEDS:
         count = resp[1]
-        print(f"GET_TOTAL_LEDS -> {count} LEDs")
+        log.debug("GET_TOTAL_LEDS -> %d LEDs", count)
         return count
-    print(f"Unexpected response: {bytes(resp[:8]).hex()}")
+    log.debug("Unexpected response: %s", bytes(resp[:8]).hex())
     return None
 
 
@@ -59,6 +62,7 @@ def main():
     parser.add_argument("--all-red", action="store_true", help="Set all LEDs to red")
     args = parser.parse_args()
 
+    logging.basicConfig(level=logging.DEBUG, format="%(message)s")
     print("Looking for NuPhy keyboard...")
     path = find_raw_hid_path()
     if path is None:

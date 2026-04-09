@@ -66,7 +66,7 @@ brew install hidapi blackhole-2ch
 ### Linux (Debian/Ubuntu)
 
 ```bash
-sudo apt install libhidapi-hidraw0
+sudo apt install libhidapi-hidraw0 python3-dev
 sudo cp udev/99-nuphy.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
@@ -74,7 +74,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ### Linux (Fedora)
 
 ```bash
-sudo dnf install hidapi
+sudo dnf install hidapi python3-devel
 sudo cp udev/99-nuphy.rules /etc/udev/rules.d/
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
