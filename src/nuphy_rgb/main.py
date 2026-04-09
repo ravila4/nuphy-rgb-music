@@ -258,6 +258,7 @@ def run(
             try:
                 last_colors = [(0, 0, 0)] * led_count
                 last_side_colors = [(0, 0, 0)] * SIDE_LED_COUNT
+                last_audio_broadcast = 0.0
                 frame_count = 0
                 while not state.quit_event.is_set():
                     t0 = time.monotonic()
@@ -278,6 +279,10 @@ def run(
                     # Process audio
                     frame = audio.process_latest()
                     if frame is not None:
+                        now = time.monotonic()
+                        if now - last_audio_broadcast >= 0.25:
+                            ipc.notify_audio_level(frame.raw_rms)
+                            last_audio_broadcast = now
                         try:
                             last_colors = visualizers[state.key.index].render(frame)
                         except Exception:

@@ -363,3 +363,6 @@ class IPCServer:
 
     def notify_sidelight_changed(self, name: str) -> None:
         self.broadcast(_notification("sidelight_changed", {"name": name}))
+
+    def notify_audio_level(self, raw_rms: float) -> None:
+        self.broadcast(_notification("audio_level", {"raw_rms": round(raw_rms, 4)}))

@@ -257,6 +257,33 @@ class TestPushNotifications:
         assert notification["params"] == {"name": "Beta"}
         assert "id" not in notification
 
+    def test_audio_level_notification(self, server) -> None:
+        srv, sock_path = server
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(str(sock_path))
+        # Establish connection with a request.
+        s.sendall(json.dumps({
+            "jsonrpc": "2.0", "method": "get_status", "id": 1,
+        }).encode() + b"\n")
+        data = b""
+        while b"\n" not in data:
+            data += s.recv(4096)
+        data = b""
+
+        # Trigger audio level notification.
+        srv.notify_audio_level(0.12345)
+
+        s.settimeout(2.0)
+        while b"\n" not in data:
+            data += s.recv(4096)
+        s.close()
+
+        notification = json.loads(data)
+        assert notification["jsonrpc"] == "2.0"
+        assert notification["method"] == "audio_level"
+        assert notification["params"] == {"raw_rms": 0.1235}
+        assert "id" not in notification
+
 
 # -- Param tests --
 
