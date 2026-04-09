@@ -1,4 +1,3 @@
-import pytest
 
 from nuphy_rgb.effects.color_wash import ColorWash
 from nuphy_rgb.visualizer import freq_to_hue

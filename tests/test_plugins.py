@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import pytest
 
 from nuphy_rgb.plugins import (
     _has_render_protocol,

@@ -1,6 +1,5 @@
 """Tests for the Mycelium visualizer effect."""
 
-import pytest
 
 from nuphy_rgb.effects.mycelium import Mycelium
 

@@ -1,7 +1,6 @@
 """Tests for the StrangeAttractor visualizer effect."""
 
 import numpy as np
-import pytest
 
 from nuphy_rgb.effects.strange_attractor import StrangeAttractor, _lorenz_step, _project
 
@@ -143,7 +142,7 @@ class TestAudioResponse:
             viz_beat.render(make_frame())
             viz_nobeat.render(make_frame())
 
-        particles_before = viz_beat._particles.copy()
+        viz_beat._particles.copy()
 
         viz_beat.render(make_frame(is_beat=True))
         viz_nobeat.render(make_frame(is_beat=False))

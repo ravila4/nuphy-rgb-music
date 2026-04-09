@@ -1,6 +1,5 @@
 """Tests for the Event Horizon visualizer effect."""
 
-import pytest
 
 from nuphy_rgb.effects.event_horizon import EventHorizon
 

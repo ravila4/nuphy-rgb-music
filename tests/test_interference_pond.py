@@ -1,6 +1,5 @@
 """Tests for the InterferencePond visualizer effect."""
 
-import numpy as np
 
 from nuphy_rgb.effects.interference_pond import InterferencePond, _MAX_RIPPLES
 from nuphy_rgb.visualizer import freq_to_hue
@@ -20,7 +19,7 @@ class TestBasicContract:
 
     def test_rgb_values_in_range(self):
         viz = InterferencePond()
-        frame = make_frame(rms=0.8, dominant_freq=1000.0, bass=0.5, is_beat=True, timestamp=0.0)
+        make_frame(rms=0.8, dominant_freq=1000.0, bass=0.5, is_beat=True, timestamp=0.0)
         # Run several frames so ripples expand
         for i in range(5):
             colors = viz.render(make_frame(

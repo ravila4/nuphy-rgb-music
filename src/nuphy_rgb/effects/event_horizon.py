@@ -7,7 +7,7 @@ from the outer edge of the disk.
 
 import colorsys
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 
