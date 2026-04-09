@@ -2,21 +2,22 @@
 
 import argparse
 import logging
-import os
-import subprocess
 import sys
-import threading
 import time
 from contextlib import ExitStack
 from pathlib import Path
-from typing import Sequence
 
 import hid
 import sounddevice as sd
-from pynput import keyboard
 
 from nuphy_rgb.audio import AudioCapture
+from nuphy_rgb.audio_discovery import (
+    find_loopback_device,
+    list_audio_devices,
+    move_source_output_to_monitor,
+)
 from nuphy_rgb.effects import ALL_EFFECTS
+from nuphy_rgb.ipc import IPCServer
 from nuphy_rgb.hid_utils import (
     SIDE_LED_COUNT,
     KeyboardInfo,
@@ -30,323 +31,10 @@ from nuphy_rgb.hid_utils import (
 from nuphy_rgb.plugins import discover_effects, discover_sidelights
 from nuphy_rgb.probe import probe
 from nuphy_rgb.sidelights import ALL_SIDELIGHTS
+from nuphy_rgb.state import DaemonState
 from nuphy_rgb.visualizer import Visualizer
 
 log = logging.getLogger(__name__)
-
-
-class _CyclicIndex:
-    """Thread-safe cyclic index with an optional named-item registry.
-
-    Tracks a current position within a fixed-size range [0, count) and
-    exposes next/prev/set navigation. A changed flag is set on each mutation
-    and consumed by poll_changed().
-
-    Args:
-        count: Number of positions in the cycle.
-        names: Optional list of names for set_by_name() lookups. Must have
-            exactly ``count`` entries if provided.
-    """
-
-    def __init__(self, count: int, names: Sequence[str] | None = None) -> None:
-        if count <= 0:
-            raise ValueError(f"count must be positive, got {count}")
-        self._lock = threading.Lock()
-        self._count = count
-        self._index = 0
-        self._changed = False
-        self._names: list[str] | None = list(names) if names is not None else None
-
-    @property
-    def index(self) -> int:
-        """Current index (read-only snapshot)."""
-        with self._lock:
-            return self._index
-
-    def next(self) -> None:
-        """Advance to the next position, wrapping around."""
-        with self._lock:
-            self._index = (self._index + 1) % self._count
-            self._changed = True
-
-    def prev(self) -> None:
-        """Move to the previous position, wrapping around."""
-        with self._lock:
-            self._index = (self._index - 1) % self._count
-            self._changed = True
-
-    def set(self, index: int) -> None:
-        """Jump directly to a position.
-
-        Args:
-            index: Target index in [0, count).
-
-        Raises:
-            ValueError: If index is out of range.
-        """
-        if index < 0 or index >= self._count:
-            raise ValueError(f"index {index} out of range [0, {self._count})")
-        with self._lock:
-            self._index = index
-            self._changed = True
-
-    def set_by_name(self, name: str) -> bool:
-        """Jump to the position whose name matches (case-insensitive).
-
-        Args:
-            name: Name to search for.
-
-        Returns:
-            True if found and index was updated; False if not found.
-
-        Raises:
-            ValueError: If this instance was created without names.
-        """
-        if self._names is None:
-            raise ValueError(
-                "_CyclicIndex was created without names; cannot use set_by_name()"
-            )
-        needle = name.lower()
-        for i, n in enumerate(self._names):
-            if n.lower() == needle:
-                with self._lock:
-                    self._index = i
-                    self._changed = True
-                return True
-        return False
-
-    def poll_changed(self) -> int | None:
-        """Return current index if changed since last poll, else None.
-
-        Resets the changed flag.
-        """
-        with self._lock:
-            if self._changed:
-                self._changed = False
-                return self._index
-            return None
-
-
-class _HotkeyState:
-    """Thread-safe state controlled by global hotkeys.
-
-    Args:
-        num_effects: Number of keyboard visualizer effects.
-        effect_names: Names of the keyboard effects for set_by_name() support.
-        num_sidelights: Number of sidelight effects (0 = sidelights disabled).
-        sidelight_names: Names of sidelight effects for set_by_name() support.
-    """
-
-    def __init__(
-        self,
-        num_effects: int,
-        effect_names: Sequence[str] | None = None,
-        num_sidelights: int = 0,
-        sidelight_names: Sequence[str] | None = None,
-    ) -> None:
-        self._lock = threading.Lock()
-        self.key = _CyclicIndex(num_effects, names=effect_names)
-        self.side: _CyclicIndex | None = (
-            _CyclicIndex(num_sidelights, names=sidelight_names)
-            if num_sidelights > 0
-            else None
-        )
-        self._quit = False
-
-    def next_effect(self) -> None:
-        """Advance to the next keyboard effect."""
-        self.key.next()
-
-    def prev_effect(self) -> None:
-        """Move to the previous keyboard effect."""
-        self.key.prev()
-
-    def next_sidelight(self) -> None:
-        """Advance to the next sidelight effect."""
-        if self.side is not None:
-            self.side.next()
-
-    def prev_sidelight(self) -> None:
-        """Move to the previous sidelight effect."""
-        if self.side is not None:
-            self.side.prev()
-
-    @property
-    def quit(self) -> bool:
-        """Whether a quit has been requested (thread-safe read)."""
-        with self._lock:
-            return self._quit
-
-    def request_quit(self) -> None:
-        """Signal the main loop to exit."""
-        with self._lock:
-            self._quit = True
-
-
-class _SafeGlobalHotKeys(keyboard.GlobalHotKeys):
-    """GlobalHotKeys that tolerates the macOS/pynput injected-arg bug.
-
-    pynput 1.8.x added an ``injected`` parameter to ``_on_press`` /
-    ``_on_release``, but the Darwin backend sometimes calls them *without*
-    it (e.g. media keys).  We normalise by defaulting ``injected=False``
-    when the argument is missing.
-    """
-
-    def _on_press(self, key, injected=False):  # type: ignore[override]
-        return super()._on_press(key, injected)
-
-    def _on_release(self, key, injected=False):  # type: ignore[override]
-        return super()._on_release(key, injected)
-
-
-def _start_hotkey_listener(state: _HotkeyState) -> _SafeGlobalHotKeys:
-    """Start a pynput global hotkey listener (runs in a daemon thread)."""
-    hotkey_map = {
-        "<ctrl>+<shift>+<right>": state.next_effect,
-        "<ctrl>+<shift>+<left>": state.prev_effect,
-        "<ctrl>+<shift>+q": state.request_quit,
-    }
-    if state.side is not None:
-        hotkey_map["<ctrl>+<shift>+<up>"] = state.next_sidelight
-        hotkey_map["<ctrl>+<shift>+<down>"] = state.prev_sidelight
-    hotkeys = _SafeGlobalHotKeys(hotkey_map)
-    hotkeys.daemon = True
-    hotkeys.start()
-    return hotkeys
-
-
-def _find_pactl_monitor() -> str | None:
-    """Find a PulseAudio/PipeWire monitor source name via ``pactl``.
-
-    Prefers the monitor of the default sink (what the user is hearing).
-    Falls back to any ``.monitor`` source.
-    """
-    try:
-        default_sink = subprocess.check_output(
-            ["pactl", "get-default-sink"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        default_sink = None
-
-    try:
-        out = subprocess.check_output(
-            ["pactl", "list", "sources", "short"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        return None
-
-    fallback: str | None = None
-    for line in out.splitlines():
-        fields = line.split("\t")
-        if len(fields) >= 2 and fields[1].endswith(".monitor"):
-            if default_sink and fields[1] == f"{default_sink}.monitor":
-                return fields[1]
-            if fallback is None:
-                fallback = fields[1]
-    return fallback
-
-
-def _move_source_output_to_monitor(monitor_name: str) -> None:
-    """Redirect our own PulseAudio/PipeWire capture stream to *monitor_name*.
-
-    Must be called after the ``sounddevice`` stream has been opened so that a
-    source-output exists.  Finds the source-output belonging to our PID and
-    moves it with ``pactl move-source-output``.
-    """
-    pid = str(os.getpid())
-    try:
-        out = subprocess.check_output(
-            ["pactl", "list", "source-outputs"],
-            text=True,
-            stderr=subprocess.DEVNULL,
-        )
-    except (FileNotFoundError, subprocess.CalledProcessError):
-        log.debug("pactl list source-outputs failed")
-        return
-
-    # Parse source-output blocks to find ours by PID.
-    current_index: str | None = None
-    for line in out.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("Source Output #"):
-            current_index = stripped.split("#")[1]
-        elif "application.process.id" in stripped and pid in stripped:
-            if current_index is not None:
-                try:
-                    subprocess.check_call(
-                        ["pactl", "move-source-output", current_index, monitor_name],
-                        stderr=subprocess.DEVNULL,
-                    )
-                    log.debug(
-                        "Moved source-output %s -> %s", current_index, monitor_name
-                    )
-                except subprocess.CalledProcessError:
-                    log.warning(
-                        "Failed to move source-output %s to %s",
-                        current_index,
-                        monitor_name,
-                    )
-                return
-
-    log.debug("No source-output found for PID %s", pid)
-
-
-def find_loopback_device() -> tuple[int, str | None] | None:
-    """Find a system-audio loopback device.
-
-    macOS: BlackHole virtual audio device.
-    Linux: PulseAudio/PipeWire monitor source (via sounddevice or pactl).
-
-    Returns ``(device_index, monitor_name)`` where *monitor_name* is set only
-    when the device needs per-app routing via ``pactl move-source-output``
-    after the stream is opened.  Returns ``None`` when no device is found.
-    """
-    for i, d in enumerate(sd.query_devices()):
-        if d["max_input_channels"] <= 0:
-            continue
-        name = d["name"]
-        if "BlackHole" in name:
-            return (i, None)
-        if sys.platform.startswith("linux") and name.lower().startswith("monitor of "):
-            return (i, None)
-
-    # On Linux, PortAudio often lacks a PulseAudio backend so monitor sources
-    # are invisible.  Fall back to pactl detection + per-app stream routing.
-    if sys.platform.startswith("linux"):
-        monitor = _find_pactl_monitor()
-        if monitor is not None:
-            # Use the "default" ALSA device; we'll reroute our stream after open.
-            default_idx = sd.default.device[0]
-            if default_idx is None or default_idx < 0:
-                default_idx = 0
-            return (default_idx, monitor)
-
-    return None
-
-
-def list_audio_devices() -> None:
-    """Print available audio input devices."""
-    print("Audio input devices:")
-    for i, d in enumerate(sd.query_devices()):
-        if d["max_input_channels"] > 0:
-            if "BlackHole" in d["name"]:
-                marker = " <-- BlackHole"
-            elif sys.platform.startswith("linux") and d["name"].lower().startswith(
-                "monitor of "
-            ):
-                marker = " <-- monitor source"
-            else:
-                marker = ""
-            print(f"  {i}: {d['name']} ({d['max_input_channels']}ch){marker}")
-    if sys.platform.startswith("linux"):
-        monitor = _find_pactl_monitor()
-        if monitor:
-            print(f"\n  PipeWire/PulseAudio monitor: {monitor}")
-            print("  (Auto-detected — will be routed at runtime via pactl)")
 
 
 def _open_keyboards(
@@ -489,8 +177,7 @@ def run(
             side_visualizers = []
             sidelight_names = []
 
-        # Set up hotkey listener
-        state = _HotkeyState(
+        state = DaemonState(
             len(visualizers),
             effect_names=effect_names,
             num_sidelights=len(side_visualizers),
@@ -511,12 +198,10 @@ def run(
                 print(f"Error: unknown sidelight '{sidelight}'. Known: {known}")
                 sys.exit(1)
 
-        try:
-            listener = _start_hotkey_listener(state)
-        except Exception:
-            log.debug("Hotkey listener failed to start", exc_info=True)
-            listener = None
-            print("  Hotkeys unavailable (Wayland?). Use --effect/--sidelight flags.")
+        # Start IPC server
+        ipc = IPCServer(state)
+        sock_path = ipc.start()
+        print(f"  IPC: {sock_path}")
 
         # Set up audio capture
         audio = AudioCapture(device_index=audio_device)
@@ -528,9 +213,6 @@ def run(
         )
         if state.side is not None:
             print(f"  Sidelight: {side_visualizers[state.side.index].name}")
-        print("  Ctrl+Shift+Right/Left = cycle effects | Ctrl+Shift+Q = quit")
-        if state.side is not None:
-            print("  Ctrl+Shift+Up/Down = cycle sidelights")
         if debug:
             print("  Debug mode: Ctrl+C also quits\n")
 
@@ -544,24 +226,26 @@ def run(
             audio.start()
             if monitor_name:
                 time.sleep(0.1)  # let PipeWire register the source-output
-                _move_source_output_to_monitor(monitor_name)
+                move_source_output_to_monitor(monitor_name)
             try:
                 last_colors = [(0, 0, 0)] * led_count
                 last_side_colors = [(0, 0, 0)] * SIDE_LED_COUNT
                 frame_count = 0
-                while not state.quit:
+                while not state.quit_event.is_set():
                     t0 = time.monotonic()
 
-                    # Check for effect switch
+                    # Check for effect switch (from IPC)
                     new_idx = state.key.poll_changed()
                     if new_idx is not None:
                         print(f"  Effect: {visualizers[new_idx].name}")
+                        ipc.notify_effect_changed(visualizers[new_idx].name)
 
-                    # Check for sidelight switch
+                    # Check for sidelight switch (from IPC)
                     if state.side is not None:
                         new_side_idx = state.side.poll_changed()
                         if new_side_idx is not None:
                             print(f"  Sidelight: {side_visualizers[new_side_idx].name}")
+                            ipc.notify_sidelight_changed(side_visualizers[new_side_idx].name)
 
                     # Process audio
                     frame = audio.process_latest()
@@ -573,7 +257,7 @@ def run(
                             log.warning(
                                 "Effect '%s' crashed, advancing", name, exc_info=True
                             )
-                            state.next_effect()
+                            state.key.next()
                         if state.side is not None:
                             try:
                                 last_side_colors = side_visualizers[
@@ -586,7 +270,7 @@ def run(
                                     name,
                                     exc_info=True,
                                 )
-                                state.next_sidelight()
+                                state.side.next()
 
                     # Send to all keyboards
                     for dev, _ in devices:
@@ -610,8 +294,7 @@ def run(
                 pass
             finally:
                 audio.stop()
-                if listener is not None:
-                    listener.stop()
+                ipc.stop()
     finally:
         for dev, _ in devices:
             dev.close()
