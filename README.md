@@ -14,8 +14,7 @@ Tested on **NuPhy Air75 V2**. Support for other Air models incoming.
 ## Firmware
 
 The keyboard needs custom QMK firmware that accepts RGB commands over Raw HID.
-Pre-built binaries are in [`firmware/fallback/`](firmware/fallback/) — no
-toolchain needed.
+Pre-built binaries are in [`firmware/fallback/`](firmware/fallback/).
 
 ### Quick flash
 
@@ -36,8 +35,8 @@ toolchain needed.
 
 3. Keyboard reboots automatically
 
-DFU mode is always recoverable — hold Esc + plug in to re-flash at any time.
-Stock NuPhy firmware is also in the fallback directory if you want to revert.
+To re-flash or revert to stock, hold Esc + plug in (DFU mode).
+Stock NuPhy firmware is also in the fallback directory.
 
 ### Building from source
 
@@ -108,8 +107,7 @@ No extra audio software needed. Volume keys and audio routing work normally.
 
 #### Linux
 
-PipeWire and PulseAudio automatically expose monitor sources — no extra
-software needed. Run `nuphy-rgb --list-audio` to find yours (look for
+PipeWire and PulseAudio expose monitor sources out of the box. Run `nuphy-rgb --list-audio` to find yours (look for
 "Monitor of ...").
 
 If no monitor source appears, ensure PipeWire or PulseAudio ALSA integration
