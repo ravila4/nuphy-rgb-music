@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import queue
 import socket
 import socketserver
 import sys
@@ -74,7 +73,7 @@ def _error_response(
 
 
 def _notification(method: str, params: dict) -> dict:
-    """Server→client push notification (no id)."""
+    """Server->client push notification (no id)."""
     return {"jsonrpc": JSONRPC_VERSION, "method": method, "params": params}
 
 
@@ -175,15 +174,14 @@ def _require_param(params: dict | None, key: str) -> Any:
 class _ClientHandler(socketserver.StreamRequestHandler):
     """Handles one connected client. Reads line-delimited JSON-RPC requests."""
 
-    server: IPCServer  # type narrowing
+    server: _IPCSocketServer  # type narrowing
 
     def setup(self) -> None:
         super().setup()
-        self._event_queue: queue.Queue[dict] = queue.Queue()
-        self.server.register_client(self)
+        self.server.ipc.register_client(self)
 
     def finish(self) -> None:
-        self.server.unregister_client(self)
+        self.server.ipc.unregister_client(self)
         super().finish()
 
     def handle(self) -> None:
@@ -200,6 +198,13 @@ class _ClientHandler(socketserver.StreamRequestHandler):
 
     def _handle_request(self, request: dict) -> None:
         request_id = request.get("id")
+        if request.get("jsonrpc") != JSONRPC_VERSION:
+            self._send(
+                _error_response(
+                    ERR_INVALID_REQUEST, "invalid jsonrpc version", request_id
+                )
+            )
+            return
         method = request.get("method")
         if not isinstance(method, str):
             self._send(
@@ -208,11 +213,15 @@ class _ClientHandler(socketserver.StreamRequestHandler):
             return
         params = request.get("params")
         try:
-            result = self.server.dispatcher.dispatch(method, params)
+            result = self.server.ipc.dispatcher.dispatch(method, params)
             self._send(_ok_response(result, request_id))
         except LookupError:
             self._send(
-                _error_response(ERR_METHOD_NOT_FOUND, f"unknown method: {method}", request_id)
+                _error_response(
+                    ERR_METHOD_NOT_FOUND,
+                    f"unknown method: {method}",
+                    request_id,
+                )
             )
         except ValueError as exc:
             self._send(
@@ -223,12 +232,8 @@ class _ClientHandler(socketserver.StreamRequestHandler):
         try:
             self.wfile.write(json.dumps(msg).encode() + b"\n")
             self.wfile.flush()
-        except BrokenPipeError:
+        except OSError:
             pass
-
-    def push_event(self, event: dict) -> None:
-        """Queue a push notification for this client."""
-        self._event_queue.put_nowait(event)
 
 
 # ---------------------------------------------------------------------------
@@ -236,11 +241,14 @@ class _ClientHandler(socketserver.StreamRequestHandler):
 # ---------------------------------------------------------------------------
 
 
-class _ThreadingUnixServer(
+class _IPCSocketServer(
     socketserver.ThreadingMixIn, socketserver.UnixStreamServer
 ):
+    """ThreadingUnixStreamServer with a typed back-reference to IPCServer."""
+
     daemon_threads = True
     allow_reuse_address = True
+    ipc: IPCServer
 
 
 class IPCServer:
@@ -259,7 +267,7 @@ class IPCServer:
         self._state = state
         self._clients: set[_ClientHandler] = set()
         self._clients_lock = threading.Lock()
-        self._server: _ThreadingUnixServer | None = None
+        self._server: _IPCSocketServer | None = None
         self._thread: threading.Thread | None = None
 
     def start(self) -> Path:
@@ -269,27 +277,30 @@ class IPCServer:
 
         # Handle stale socket from a previous crash.
         if sock_path.exists():
-            try:
-                probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-                probe.connect(str(sock_path))
-                probe.close()
-                raise RuntimeError(
-                    f"Another daemon is already listening on {sock_path}"
-                )
-            except ConnectionRefusedError:
-                log.debug("Removing stale socket: %s", sock_path)
-                sock_path.unlink()
+            self._probe_or_remove(sock_path)
 
-        self._server = _ThreadingUnixServer(str(sock_path), _ClientHandler)
-        self._server.dispatcher = self.dispatcher  # type: ignore[attr-defined]
-        self._server.register_client = self.register_client  # type: ignore[attr-defined]
-        self._server.unregister_client = self.unregister_client  # type: ignore[attr-defined]
+        self._server = _IPCSocketServer(str(sock_path), _ClientHandler)
+        self._server.ipc = self
         self._thread = threading.Thread(
             target=self._server.serve_forever, daemon=True
         )
         self._thread.start()
         log.debug("IPC server listening on %s", sock_path)
         return sock_path
+
+    @staticmethod
+    def _probe_or_remove(sock_path: Path) -> None:
+        """Probe an existing socket. Remove if stale, raise if live."""
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as probe:
+            try:
+                probe.connect(str(sock_path))
+            except (ConnectionRefusedError, OSError):
+                log.debug("Removing stale socket: %s", sock_path)
+                sock_path.unlink()
+                return
+        raise RuntimeError(
+            f"Another daemon is already listening on {sock_path}"
+        )
 
     def stop(self) -> None:
         """Shut down the server and clean up the socket file."""
@@ -313,8 +324,9 @@ class IPCServer:
     def broadcast(self, event: dict) -> None:
         """Push a notification to all connected clients."""
         with self._clients_lock:
-            for client in self._clients:
-                client._send(event)
+            clients = list(self._clients)
+        for client in clients:
+            client._send(event)
 
     def notify_effect_changed(self, name: str) -> None:
         self.broadcast(_notification("effect_changed", {"name": name}))

@@ -2,11 +2,10 @@
 
 import json
 import socket
-import time
 
 import pytest
 
-from nuphy_rgb.ipc import IPCServer, control_socket_path
+from nuphy_rgb.ipc import IPCServer
 from nuphy_rgb.state import DaemonState
 
 
@@ -46,12 +45,6 @@ def _send(sock_path, request: dict) -> dict:
         data += chunk
     s.close()
     return json.loads(data)
-
-
-def _sock_path(monkeypatch, tmp_path):
-    """Helper to get the monkeypatched socket path."""
-    # The path was set in the server fixture
-    return tmp_path / "control.sock"
 
 
 class TestGetStatus:
@@ -152,6 +145,13 @@ class TestErrorHandling:
         resp = json.loads(data)
         assert resp["error"]["code"] == -32700
 
+    def test_missing_jsonrpc_version(self, server, tmp_path) -> None:
+        resp = _send(tmp_path / "control.sock", {
+            "method": "get_status", "id": 1,
+        })
+        assert resp["error"]["code"] == -32600
+        assert "version" in resp["error"]["message"]
+
 
 class TestStaleSockets:
     def test_removes_stale_socket_on_start(self, state, tmp_path, monkeypatch) -> None:
@@ -159,8 +159,10 @@ class TestStaleSockets:
         monkeypatch.setattr(
             "nuphy_rgb.ipc.control_socket_path", lambda: sock_path
         )
-        # Create a stale socket file (not listening).
-        sock_path.touch()
+        # Create a real stale socket (bound but not listening).
+        stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        stale.bind(str(sock_path))
+        stale.close()
 
         srv = IPCServer(state)
         returned_path = srv.start()
@@ -191,3 +193,35 @@ class TestNoSidelights:
             assert status["result"]["sidelight"] is None
         finally:
             srv.stop()
+
+
+class TestPushNotifications:
+    def test_broadcast_reaches_connected_client(self, server, tmp_path) -> None:
+        sock_path = tmp_path / "control.sock"
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(str(sock_path))
+        # Send a request to confirm connection is established.
+        s.sendall(json.dumps({
+            "jsonrpc": "2.0", "method": "get_status", "id": 1,
+        }).encode() + b"\n")
+        # Read the response.
+        data = b""
+        while b"\n" not in data:
+            data += s.recv(4096)
+        # Clear buffer.
+        data = b""
+
+        # Trigger a notification from the server.
+        server.notify_effect_changed("Beta")
+
+        # Read the pushed notification.
+        s.settimeout(2.0)
+        while b"\n" not in data:
+            data += s.recv(4096)
+        s.close()
+
+        notification = json.loads(data)
+        assert notification["jsonrpc"] == "2.0"
+        assert notification["method"] == "effect_changed"
+        assert notification["params"] == {"name": "Beta"}
+        assert "id" not in notification
