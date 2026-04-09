@@ -125,18 +125,39 @@ nuphy-rgb --list-sidelights                  # list sidelight effects
 nuphy-rgb --audio-device 3 --fps 30
 ```
 
-### Hotkeys
+### IPC control
 
-| Shortcut | Action |
-|----------|--------|
-| `Ctrl+Shift+Right` | Next effect |
-| `Ctrl+Shift+Left` | Previous effect |
-| `Ctrl+Shift+Up` | Next sidelight |
-| `Ctrl+Shift+Down` | Previous sidelight |
-| `Ctrl+Shift+Q` | Quit |
+The daemon exposes a JSON-RPC 2.0 control socket for runtime control:
 
-> **Linux/Wayland:** Global hotkeys require X11. Under Wayland, hotkeys are
-> unavailable — use `--effect` and `--sidelight` flags to select at launch.
+```
+Linux:  $XDG_RUNTIME_DIR/nuphy-rgb/control.sock
+macOS:  $TMPDIR/nuphy-rgb/control.sock
+```
+
+Switch effects, query status, or quit from another terminal:
+
+```bash
+# Using nc (netcat)
+echo '{"jsonrpc":"2.0","method":"get_status","id":1}' | nc -U $XDG_RUNTIME_DIR/nuphy-rgb/control.sock
+echo '{"jsonrpc":"2.0","method":"next_effect","id":1}' | nc -U $XDG_RUNTIME_DIR/nuphy-rgb/control.sock
+echo '{"jsonrpc":"2.0","method":"set_effect","params":{"name":"Mycelium"},"id":1}' | nc -U $XDG_RUNTIME_DIR/nuphy-rgb/control.sock
+echo '{"jsonrpc":"2.0","method":"quit","id":1}' | nc -U $XDG_RUNTIME_DIR/nuphy-rgb/control.sock
+```
+
+| Method | Params | Description |
+|--------|--------|-------------|
+| `get_status` | — | Current effect, sidelight, running state |
+| `list_effects` | — | All available effect and sidelight names |
+| `set_effect` | `{"name": "..."}` | Switch keyboard effect |
+| `set_sidelight` | `{"name": "..."}` | Switch sidelight effect |
+| `next_effect` | — | Cycle to next keyboard effect |
+| `prev_effect` | — | Cycle to previous keyboard effect |
+| `next_sidelight` | — | Cycle to next sidelight effect |
+| `prev_sidelight` | — | Cycle to previous sidelight effect |
+| `quit` | — | Stop the daemon |
+
+Connected clients also receive push notifications (`effect_changed`,
+`sidelight_changed`) when the active effect is switched.
 
 ## Effects
 
