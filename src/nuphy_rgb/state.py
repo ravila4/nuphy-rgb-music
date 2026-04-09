@@ -145,21 +145,27 @@ class DaemonState:
         self._side_visualizers = list(side_visualizers)
 
     def _active_effect(self) -> Any | None:
-        """Snapshot the currently active effect, or None."""
+        """Snapshot the currently active keyboard effect, or None."""
         if not self._visualizers:
             return None
         return self._visualizers[self.key.index]
 
-    def get_active_params(self) -> dict[str, VisualizerParam]:
-        """Return the params dict for the currently active effect, or {}."""
-        effect = self._active_effect()
+    def _active_sidelight(self) -> Any | None:
+        """Snapshot the currently active sidelight effect, or None."""
+        if not self._side_visualizers or self.side is None:
+            return None
+        return self._side_visualizers[self.side.index]
+
+    @staticmethod
+    def _get_params(effect: Any | None) -> dict[str, VisualizerParam]:
         if effect is None:
             return {}
         return getattr(effect, "params", {})
 
-    def set_active_param(self, name: str, value: float) -> VisualizerParam:
-        """Set a param on the active effect. Raises ValueError on bad name/range."""
-        effect = self._active_effect()
+    @staticmethod
+    def _set_param(
+        effect: Any | None, name: str, value: float,
+    ) -> VisualizerParam:
         if effect is None:
             raise ValueError("no active effect")
         params = getattr(effect, "params", {})
@@ -167,6 +173,22 @@ class DaemonState:
             raise ValueError(f"unknown param: {name}")
         params[name].set(value)
         return params[name]
+
+    def get_active_params(self) -> dict[str, VisualizerParam]:
+        """Return the params dict for the currently active keyboard effect."""
+        return self._get_params(self._active_effect())
+
+    def set_active_param(self, name: str, value: float) -> VisualizerParam:
+        """Set a param on the active keyboard effect."""
+        return self._set_param(self._active_effect(), name, value)
+
+    def get_active_side_params(self) -> dict[str, VisualizerParam]:
+        """Return the params dict for the currently active sidelight effect."""
+        return self._get_params(self._active_sidelight())
+
+    def set_active_side_param(self, name: str, value: float) -> VisualizerParam:
+        """Set a param on the active sidelight effect."""
+        return self._set_param(self._active_sidelight(), name, value)
 
     def request_quit(self) -> None:
         """Signal the main loop to exit."""

@@ -283,13 +283,32 @@ class _FakeNoParams:
         return []
 
 
+class _FakeSideWithParams:
+    name = "Glow"
+
+    def __init__(self):
+        self.params = {
+            "brightness": VisualizerParam(
+                value=1.0, default=1.0, min=0.0, max=1.0,
+                description="Brightness",
+            ),
+        }
+
+    def render(self, frame):
+        return []
+
+
 @pytest.fixture()
 def param_state():
     visualizers = [_FakeWithParams(), _FakeNoParams()]
+    side_visualizers = [_FakeSideWithParams()]
     return DaemonState(
         num_effects=2,
         effect_names=["Fancy", "Plain"],
         visualizers=visualizers,
+        num_sidelights=1,
+        sidelight_names=["Glow"],
+        side_visualizers=side_visualizers,
     )
 
 
@@ -373,3 +392,33 @@ class TestSetParam:
         })
         assert "error" in resp
         assert "missing required param" in resp["error"]["message"]
+
+
+class TestGetSideParams:
+    def test_returns_side_params(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_side_params", "id": 1,
+        })
+        result = resp["result"]
+        assert "brightness" in result
+        assert result["brightness"]["value"] == 1.0
+
+
+class TestSetSideParam:
+    def test_set_valid_value(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_side_param",
+            "params": {"name": "brightness", "value": 0.4}, "id": 1,
+        })
+        assert resp["result"] == {"name": "brightness", "value": 0.4}
+
+    def test_out_of_range_returns_error(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_side_param",
+            "params": {"name": "brightness", "value": 2.0}, "id": 1,
+        })
+        assert "error" in resp
+        assert "out of range" in resp["error"]["message"]

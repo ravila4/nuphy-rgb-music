@@ -14,6 +14,7 @@ import math
 
 from nuphy_rgb.audio import AudioFrame, ExpFilter, NUM_CHROMA_BINS
 from nuphy_rgb.hid_utils import SIDE_LED_COUNT
+from nuphy_rgb.visualizer_params import VisualizerParam
 
 TWO_PI = 2.0 * math.pi
 _HUE_ALPHA_RISE = 0.4
@@ -31,6 +32,12 @@ class ChordGlow:
         self._smooth_sin: float = 0.0
         self._smooth_cos: float = 0.0
         self._beat_flash: float = 0.0
+        self.params: dict[str, VisualizerParam] = {
+            "brightness": VisualizerParam(
+                value=1.0, default=1.0, min=0.0, max=1.0,
+                description="Overall brightness multiplier",
+            ),
+        }
 
     def render(self, frame: AudioFrame) -> list[tuple[int, int, int]]:
         # Circular mean hue from chroma weights
@@ -64,6 +71,7 @@ class ChordGlow:
             self._beat_flash = 0.3
 
         brightness = min(1.0, amplitude + self._beat_flash)
+        brightness *= self.params["brightness"].get()
 
         if brightness < 0.001:
             return [(0, 0, 0)] * SIDE_LED_COUNT
