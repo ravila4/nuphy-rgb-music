@@ -1,5 +1,4 @@
 import AppKit
-import CoreGraphics
 import IOKit.hid
 import os
 import SwiftUI
@@ -9,6 +8,9 @@ private let logger = Logger(subsystem: "com.nuphy-rgb.menu", category: "Permissi
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Bring app to front so permission alerts are visible
+        NSApp.activate(ignoringOtherApps: true)
+
         // Check permissions before the daemon starts (AppState.init triggers daemon launch)
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(500))
@@ -17,50 +19,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkPermissions() {
-        let hasScreenRecording = CGPreflightScreenCaptureAccess()
+        // Screen & System Audio Recording: no reliable preflight API for Process Tap
+        // audio capture (CGPreflightScreenCaptureAccess checks screen capture, not audio).
+        // Prompt once on first launch; the daemon handles the failure case.
+        let promptedKey = "hasPromptedForScreenRecording"
+        if !UserDefaults.standard.bool(forKey: promptedKey) {
+            UserDefaults.standard.set(true, forKey: promptedKey)
+            promptForPermission(
+                name: "Screen & System Audio Recording",
+                reason: "to capture system audio for music-reactive effects",
+                pane: "Privacy_ScreenCapture"
+            )
+        }
+
+        // Input Monitoring: IOHIDCheckAccess reliably detects the current state,
+        // including stale CDHash grants. Check every launch.
         let hidAccess = IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
         let hasInputMonitoring = hidAccess == kIOHIDAccessTypeGranted
+        logger.warning("permissions: inputMonitoring=\(hasInputMonitoring) (raw=\(hidAccess.rawValue))")
 
-        logger.warning("permissions: screenRecording=\(hasScreenRecording) inputMonitoring=\(hasInputMonitoring) (raw=\(hidAccess.rawValue))")
+        if !hasInputMonitoring {
+            promptForPermission(
+                name: "Input Monitoring",
+                reason: "to send RGB data to your keyboard via USB",
+                pane: "Privacy_ListenEvent"
+            )
+        }
+    }
 
-        if hasScreenRecording && hasInputMonitoring { return }
-
-        // Build a message describing what's missing
-        var missing: [String] = []
-        if !hasScreenRecording { missing.append("Screen & System Audio Recording") }
-        if !hasInputMonitoring { missing.append("Input Monitoring") }
-
+    private func promptForPermission(name: String, reason: String, pane: String) {
         let alert = NSAlert()
-        alert.messageText = "Permissions Required"
+        alert.messageText = "\(name) Required"
         alert.informativeText = """
-            NuPhy RGB needs the following permissions to control \
-            your keyboard:\n\n\
-            \(missing.map { "  \u{2022} \($0)" }.joined(separator: "\n"))\n\n\
-            After granting permissions in System Settings, \
-            restart NuPhy RGB for them to take effect.
+            NuPhy RGB needs "\(name)" \(reason).\n\n\
+            After granting permission in System Settings, \
+            restart NuPhy RGB for it to take effect.
             """
         alert.alertStyle = .warning
-
-        // Open the most relevant pane first
-        if !hasScreenRecording {
-            alert.addButton(withTitle: "Open Screen Recording Settings")
-        }
-        if !hasInputMonitoring {
-            alert.addButton(withTitle: "Open Input Monitoring Settings")
-        }
+        alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Later")
 
-        let response = alert.runModal()
-
-        if response == .alertFirstButtonReturn {
-            if !hasScreenRecording {
-                openSystemSettings(pane: "Privacy_ScreenCapture")
-            } else {
-                openSystemSettings(pane: "Privacy_ListenEvent")
-            }
-        } else if response == .alertSecondButtonReturn && !hasScreenRecording && !hasInputMonitoring {
-            // Second button when both are missing = Input Monitoring
-            openSystemSettings(pane: "Privacy_ListenEvent")
+        if alert.runModal() == .alertFirstButtonReturn {
+            openSystemSettings(pane: pane)
         }
     }
 
