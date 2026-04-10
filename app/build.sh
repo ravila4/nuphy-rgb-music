@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build NuPhyRGBMenu.app with embedded NuPhyDaemon binary
+# Build "NuPhy RGB.app" with embedded NuPhyDaemon binary
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,8 +22,9 @@ echo "==> Building NuPhyRGBMenu (Swift)..."
 cd "$SCRIPT_DIR"
 swift build 2>&1
 
+# SPM target is "NuPhyRGBMenu" but the .app is named "NuPhy RGB"
 BINARY=".build/debug/NuPhyRGBMenu"
-APP_DIR=".build/debug/NuPhyRGBMenu.app"
+APP_DIR=".build/debug/NuPhy RGB.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 
@@ -47,5 +48,31 @@ codesign --force \
     -s - "$MACOS/NuPhyDaemon" 2>&1
 codesign --force -s - "$APP_DIR" 2>&1
 
-echo "==> Done: $APP_DIR"
-echo "    Run with: open $APP_DIR"
+# --- Step 5: Package DMG ---
+if [ "${1:-}" = "--dmg" ]; then
+    VERSION=$(cd "$PROJECT_ROOT" && python3 -c "
+import tomllib, pathlib
+p = tomllib.loads(pathlib.Path('pyproject.toml').read_text())
+print(p['project']['version'])
+")
+    DMG_NAME="NuPhyRGB-v${VERSION}.dmg"
+    STAGING="$SCRIPT_DIR/.build/dmg-staging"
+
+    echo "==> Packaging $DMG_NAME..."
+    rm -rf "$STAGING" "$SCRIPT_DIR/.build/$DMG_NAME"
+    mkdir -p "$STAGING"
+    cp -R "$APP_DIR" "$STAGING/"
+    ln -s /Applications "$STAGING/Applications"
+
+    hdiutil create -volname "NuPhy RGB" \
+        -srcfolder "$STAGING" \
+        -ov -format UDZO \
+        "$SCRIPT_DIR/.build/$DMG_NAME" 2>&1
+
+    rm -rf "$STAGING"
+    echo "==> DMG: .build/$DMG_NAME ($(du -h "$SCRIPT_DIR/.build/$DMG_NAME" | cut -f1))"
+else
+    echo "==> Done: $APP_DIR"
+    echo "    Run with: open \"$APP_DIR\""
+    echo "    Build DMG: bash build.sh --dmg"
+fi
