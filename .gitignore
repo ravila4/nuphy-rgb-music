@@ -11,4 +11,5 @@ build/
 dist/
 research/
 CLAUDE.md
+.claude/skills/
 .DS_Store
