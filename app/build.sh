@@ -37,10 +37,13 @@ echo "==> Embedding NuPhyDaemon..."
 cp "$DAEMON_BIN" "$MACOS/NuPhyDaemon"
 
 # --- Step 4: Codesign ---
-codesign --force --options runtime \
+# Order matters: sign the daemon FIRST (with entitlements for PyInstaller runtime),
+# then sign the .app bundle to seal the daemon's final signature in CodeResources.
+# Reversing this order breaks the bundle seal and causes TCC permission failures.
+codesign --force \
     --entitlements "$PROJECT_ROOT/entitlements.plist" \
     -s - "$MACOS/NuPhyDaemon" 2>&1
-codesign --force --deep -s - "$APP_DIR" 2>&1
+codesign --force -s - "$APP_DIR" 2>&1
 
 echo "==> Done: $APP_DIR"
 echo "    Run with: open $APP_DIR"

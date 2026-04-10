@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import os
 
 private let logger = Logger(subsystem: "com.nuphy-rgb.menu", category: "DaemonMgr")
@@ -40,6 +40,11 @@ final class DaemonManager {
                 .deletingLastPathComponent()  // project root
         }
 
+        // Force unbuffered Python output so pipes capture immediately
+        var env = ProcessInfo.processInfo.environment
+        env["PYTHONUNBUFFERED"] = "1"
+        proc.environment = env
+
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         proc.standardOutput = stdoutPipe
@@ -53,10 +58,23 @@ final class DaemonManager {
             }
         }
 
+        // Ensure daemon dies when the app exits (no orphans)
+        proc.qualityOfService = .userInitiated
         try proc.run()
         process = proc
         state = .running
         logger.warning("started daemon (pid=\(proc.processIdentifier))")
+
+        // Kill daemon when the app exits (no orphans)
+        let pid = proc.processIdentifier
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.willTerminateNotification,
+            object: nil,
+            queue: .main
+        ) { _ in
+            logger.warning("app terminating, killing daemon pid=\(pid)")
+            kill(pid, SIGTERM)
+        }
 
         // Log stderr continuously in background
         let errHandle = stderrPipe.fileHandleForReading
@@ -113,6 +131,23 @@ final class DaemonManager {
     /// Check if a daemon is already running (socket probe).
     nonisolated func detectRunning() -> Bool {
         DaemonClient.probe()
+    }
+
+    /// Kill any existing daemon via quit RPC, then wait for socket to go away.
+    func killExisting(via client: DaemonClient) async {
+        guard detectRunning() else { return }
+        logger.warning("killing existing daemon")
+        client.connect()
+        do {
+            try await client.quit()
+        } catch {}
+        client.disconnect()
+        // Wait for socket to disappear
+        for _ in 0..<20 {
+            try? await Task.sleep(for: .milliseconds(250))
+            if !detectRunning() { return }
+        }
+        logger.warning("existing daemon did not exit cleanly")
     }
 
     private func setSocketPath(_ path: String) {
