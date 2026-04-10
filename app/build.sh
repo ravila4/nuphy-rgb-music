@@ -29,8 +29,10 @@ MACOS="$CONTENTS/MacOS"
 
 echo "==> Wrapping in .app bundle..."
 mkdir -p "$MACOS"
+mkdir -p "$CONTENTS/Resources"
 cp "$BINARY" "$MACOS/NuPhyRGBMenu"
 cp Info.plist "$CONTENTS/Info.plist"
+cp AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"
 
 # --- Step 3: Embed daemon binary ---
 echo "==> Embedding NuPhyDaemon..."

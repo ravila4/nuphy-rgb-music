@@ -49,6 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func promptForPermission(name: String, reason: String, pane: String) {
         let alert = NSAlert()
+        alert.icon = NSApplication.shared.applicationIconImage
         alert.messageText = "\(name) Required"
         alert.informativeText = """
             NuPhy RGB needs "\(name)" \(reason).\n\n\
