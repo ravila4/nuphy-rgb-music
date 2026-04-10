@@ -16,6 +16,7 @@ final class DaemonManager {
     private(set) var state: State = .stopped
     private var process: Process?
     private var socketPath: String?
+    private var terminationObserver: (any NSObjectProtocol)?
 
     /// Start the daemon. Parses stdout for the IPC socket path.
     func start() throws {
@@ -67,7 +68,7 @@ final class DaemonManager {
 
         // Kill daemon when the app exits (no orphans)
         let pid = proc.processIdentifier
-        NotificationCenter.default.addObserver(
+        terminationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
@@ -91,17 +92,19 @@ final class DaemonManager {
         // Parse stdout continuously for socket path
         let outHandle = stdoutPipe.fileHandleForReading
         Task.detached { [weak self] in
-            for try await line in outHandle.bytes.lines {
-                logger.warning("stdout: \(line, privacy: .public)")
-                if line.contains("IPC:") {
-                    let path = line.components(separatedBy: "IPC:").last?
-                        .trimmingCharacters(in: .whitespaces) ?? ""
-                    if !path.isEmpty {
-                        // Can't send self across isolation boundaries in Swift 6;
-                        // capture the path and let the caller set it via a callback.
-                        await self?.setSocketPath(path)
+            do {
+                for try await line in outHandle.bytes.lines {
+                    logger.warning("stdout: \(line, privacy: .public)")
+                    if line.contains("IPC:") {
+                        let path = line.components(separatedBy: "IPC:").last?
+                            .trimmingCharacters(in: .whitespaces) ?? ""
+                        if !path.isEmpty {
+                            await self?.setSocketPath(path)
+                        }
                     }
                 }
+            } catch {
+                logger.error("stdout pipe error: \(error)")
             }
         }
     }
@@ -159,6 +162,10 @@ final class DaemonManager {
     }
 
     private func cleanup() {
+        if let obs = terminationObserver {
+            NotificationCenter.default.removeObserver(obs)
+            terminationObserver = nil
+        }
         process = nil
         socketPath = nil
         state = .stopped

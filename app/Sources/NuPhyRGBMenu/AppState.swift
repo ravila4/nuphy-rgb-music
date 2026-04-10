@@ -46,6 +46,7 @@ class AppState: DaemonClientDelegate {
     }
 
     func startDaemon() {
+        guard manager.state == .stopped else { return }
         do {
             try manager.start()
             let socketPath = manager.effectiveSocketPath
