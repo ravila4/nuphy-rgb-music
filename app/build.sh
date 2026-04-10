@@ -20,11 +20,16 @@ echo "    Daemon binary: $(du -h "$DAEMON_BIN" | cut -f1)"
 # --- Step 2: Build Swift menu bar app ---
 echo "==> Building NuPhyRGBMenu (Swift)..."
 cd "$SCRIPT_DIR"
-swift build 2>&1
+if [ "${1:-}" = "--dmg" ]; then
+    BUILD_CONFIG="release"
+else
+    BUILD_CONFIG="debug"
+fi
+swift build -c "$BUILD_CONFIG" 2>&1
 
 # SPM target is "NuPhyRGBMenu" but the .app is named "NuPhy RGB"
-BINARY=".build/debug/NuPhyRGBMenu"
-APP_DIR=".build/debug/NuPhy RGB.app"
+BINARY=".build/$BUILD_CONFIG/NuPhyRGBMenu"
+APP_DIR=".build/$BUILD_CONFIG/NuPhy RGB.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 

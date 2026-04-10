@@ -72,10 +72,8 @@ final class DaemonManager {
             forName: NSApplication.willTerminateNotification,
             object: nil,
             queue: .main
-        ) { _ in
-            logger.warning("app terminating, killing daemon process group pid=\(pid)")
-            // Negative PID kills the entire process group (PyInstaller bootloader + Python child)
-            kill(-pid, SIGTERM)
+        ) { [weak self] _ in
+            self?.killProcessGroup()
         }
 
         // Log stderr continuously in background
@@ -120,10 +118,7 @@ final class DaemonManager {
             try await Task.sleep(for: .seconds(1))
         } catch {}
 
-        if let proc = process, proc.isRunning {
-            proc.terminate()
-        }
-
+        killProcessGroup()
         cleanup()
     }
 
@@ -152,6 +147,14 @@ final class DaemonManager {
             if !detectRunning() { return }
         }
         logger.warning("existing daemon did not exit cleanly")
+    }
+
+    /// Kill the daemon's entire process group (PyInstaller bootloader + Python child).
+    private func killProcessGroup() {
+        guard let proc = process else { return }
+        let pid = proc.processIdentifier
+        logger.warning("killing daemon process group pid=\(pid)")
+        kill(-pid, SIGTERM)
     }
 
     private func setSocketPath(_ path: String) {
