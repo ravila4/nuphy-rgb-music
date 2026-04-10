@@ -11,3 +11,4 @@ build/
 dist/
 research/
 CLAUDE.md
+.DS_Store

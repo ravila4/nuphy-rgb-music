@@ -7,6 +7,9 @@ Tested on **NuPhy Air75 V2**. Support for other Air models incoming.
 
 ## Requirements
 
+> [!IMPORTANT]
+> The keyboard must be connected via USB. Bluetooth is not supported because Raw HID is a USB-only protocol.
+
 - **macOS 14.2+** (tested on Apple Silicon), or **Linux** (X11/Wayland, experimental)
 - Python 3.11+
 - Custom QMK firmware with RGB streaming handler (see below)
