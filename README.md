@@ -82,13 +82,12 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 ```bash
 git clone https://github.com/ravila4/nuphy-rgb-music.git
 cd nuphy-rgb-music
-pip install .
-```
 
-Or with [uv](https://docs.astral.sh/uv/):
-
-```bash
+# With uv (recommended)
 uv sync
+
+# Or with pip
+pip install .
 ```
 
 ### Audio setup
@@ -103,7 +102,11 @@ running from the command line, or the packaged app itself.
 Grant it in **System Settings \> Privacy & Security \> Screen & System
 Audio Recording**. You may need to restart the app after granting.
 
-No extra audio software needed. Volume keys and audio routing work normally.
+The app also needs **Input Monitoring** permission for USB HID access to the
+keyboard. Grant it in **System Settings \> Privacy & Security \> Input
+Monitoring**.
+
+No extra audio software needed.
 
 #### Linux
 
@@ -112,6 +115,10 @@ PipeWire and PulseAudio expose monitor sources out of the box. Run `nuphy-rgb --
 
 If no monitor source appears, ensure PipeWire or PulseAudio ALSA integration
 is installed (`pipewire-pulse`, `pipewire-alsa`, or equivalent for your distro).
+
+## macOS Menu Bar App
+
+A native menu bar app is available in [`app/`](app/). See [app/README.md](app/README.md) for build and usage instructions.
 
 ## Usage
 
@@ -161,6 +168,7 @@ echo '{"jsonrpc":"2.0","method":"quit","id":1}' | nc -U $XDG_RUNTIME_DIR/nuphy-r
 | `set_param` | `{"name": "...", "value": N}` | Set a parameter on the active keyboard effect |
 | `get_side_params` | — | Tunable parameters for the active sidelight effect |
 | `set_side_param` | `{"name": "...", "value": N}` | Set a parameter on the active sidelight effect |
+| `set_paused` | `{"paused": true}` | Pause/resume rendering |
 | `quit` | — | Stop the daemon |
 
 Effects can expose tunable parameters (decay rates, brightness, etc.) with
