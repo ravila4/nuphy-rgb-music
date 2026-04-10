@@ -1,6 +1,6 @@
 [project]
 name = "nuphy-rgb"
-version = "0.7.0"
+version = "0.8.0"
 description = "Music-reactive per-key RGB for NuPhy Air75 V2 keyboards"
 requires-python = ">=3.11"
 authors = [
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pyinstaller>=6.0"]
 
 [project.scripts]
 nuphy-rgb = "nuphy_rgb.main:main"
@@ -34,4 +34,5 @@ pythonpath = ["tests"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pyinstaller>=6.0",
 ]

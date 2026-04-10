@@ -5,7 +5,11 @@ import logging
 import sys
 import time
 from contextlib import ExitStack
-from importlib.metadata import version as pkg_version
+try:
+    from importlib.metadata import version as _pkg_version
+    __version__ = _pkg_version("nuphy-rgb")
+except Exception:
+    __version__ = "dev"
 from pathlib import Path
 
 import hid
@@ -258,6 +262,7 @@ def run(
             try:
                 last_colors = [(0, 0, 0)] * led_count
                 last_side_colors = [(0, 0, 0)] * SIDE_LED_COUNT
+                last_audio_broadcast = 0.0
                 frame_count = 0
                 while not state.quit_event.is_set():
                     t0 = time.monotonic()
@@ -275,9 +280,29 @@ def run(
                             print(f"  Sidelight: {side_visualizers[new_side_idx].name}")
                             ipc.notify_sidelight_changed(side_visualizers[new_side_idx].name)
 
+                    # Check for pause toggle (from IPC)
+                    new_paused = state.poll_paused_changed()
+                    if new_paused is not None:
+                        print(f"  {'Paused' if new_paused else 'Resumed'}")
+                        ipc.notify_paused_changed(new_paused)
+                        if new_paused:
+                            for dev, _ in devices:
+                                send_frame(dev, [(0, 0, 0)] * led_count)
+                                if state.side is not None:
+                                    send_side_frame(dev, [(0, 0, 0)] * SIDE_LED_COUNT)
+
+                    if state.paused:
+                        audio.process_latest()  # drain queue so resume isn't stale
+                        time.sleep(frame_period)
+                        continue
+
                     # Process audio
                     frame = audio.process_latest()
                     if frame is not None:
+                        now = time.monotonic()
+                        if now - last_audio_broadcast >= 0.25:
+                            ipc.notify_audio_level(frame.raw_rms)
+                            last_audio_broadcast = now
                         try:
                             last_colors = visualizers[state.key.index].render(frame)
                         except Exception:
@@ -333,7 +358,7 @@ def main():
     parser = argparse.ArgumentParser(description="NuPhy Air75 V2 music-reactive RGB")
     parser.add_argument(
         "--version", action="version",
-        version=f"%(prog)s {pkg_version('nuphy-rgb')}",
+        version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "--audio-device",
