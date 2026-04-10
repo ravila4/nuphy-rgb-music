@@ -8,6 +8,8 @@
     <string>com.nuphy-rgb.menu</string>
     <key>CFBundleName</key>
     <string>NuPhy RGB</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.7.0</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>NSPrincipalClass</key>

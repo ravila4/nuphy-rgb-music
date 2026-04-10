@@ -58,6 +58,29 @@ struct MenuView: View {
 
         Divider()
 
+        Button("About NuPhy RGB") {
+            let credits = NSMutableAttributedString()
+            credits.append(NSAttributedString(
+                string: "Music-reactive RGB for NuPhy keyboards\n\n",
+                attributes: [.font: NSFont.systemFont(ofSize: 11)]
+            ))
+            credits.append(NSAttributedString(
+                string: "Support on Ko-fi",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 11),
+                    .link: URL(string: "https://ko-fi.com/ravila4")!,
+                ]
+            ))
+
+            NSApplication.shared.orderFrontStandardAboutPanel(options: [
+                .applicationName: "NuPhy RGB",
+                .applicationIcon: NSApplication.shared.applicationIconImage as Any,
+                .version: "",
+                .credits: credits,
+            ])
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
+
         Button("Quit") {
             Task {
                 await appState.quitApp()
