@@ -23,11 +23,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         window.center()
         window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
 
         // Delay permission prompt so it doesn't block daemon connection
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in
-            promptForAudioPermissionIfNeeded()
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            self.promptForAudioPermissionIfNeeded()
         }
     }
 

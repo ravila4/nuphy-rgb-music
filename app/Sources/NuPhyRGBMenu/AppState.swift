@@ -83,7 +83,7 @@ class AppState: DaemonClientDelegate {
                 let result = try await client.setPaused(!isPaused)
                 isPaused = result.paused
             } catch {
-                print("[AppState] setPaused error: \(error)")
+                logger.error("setPaused error: \(error)")
             }
         }
     }
@@ -94,7 +94,7 @@ class AppState: DaemonClientDelegate {
                 let result = try await client.setEffect(name: name)
                 activeEffect = result.name
             } catch {
-                print("[AppState] setEffect error: \(error)")
+                logger.error("setEffect error: \(error)")
             }
         }
     }
@@ -105,7 +105,7 @@ class AppState: DaemonClientDelegate {
                 let result = try await client.setSidelight(name: name)
                 activeSidelight = result.name
             } catch {
-                print("[AppState] setSidelight error: \(error)")
+                logger.error("setSidelight error: \(error)")
             }
         }
     }

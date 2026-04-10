@@ -134,17 +134,14 @@ final class DaemonClient {
 
     // MARK: - Socket path
 
-    static func defaultSocketPath() -> String {
+    nonisolated static func defaultSocketPath() -> String {
         let tmpdir = ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
         return "\(tmpdir)/nuphy-rgb/control.sock"
     }
 
     /// Probe whether a daemon is listening at the given socket path.
     nonisolated static func probe(socketPath: String? = nil) -> Bool {
-        let path = socketPath ?? {
-            let tmpdir = ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp"
-            return "\(tmpdir)/nuphy-rgb/control.sock"
-        }()
+        let path = socketPath ?? defaultSocketPath()
 
         let probeFd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard probeFd >= 0 else { return false }

@@ -10,20 +10,21 @@ struct MenuView: View {
             Divider()
         }
 
-        // Effects
+        // Effects submenu
         if !appState.effects.isEmpty {
-            ForEach(appState.effects, id: \.self) { name in
-                Button {
-                    appState.selectEffect(name)
-                } label: {
-                    HStack {
-                        Image(systemName: appState.activeEffect == name ? "checkmark" : "")
-                            .frame(width: 16)
-                        Text(name)
+            Menu("Effects") {
+                ForEach(appState.effects, id: \.self) { name in
+                    Button {
+                        appState.selectEffect(name)
+                    } label: {
+                        HStack {
+                            Image(systemName: appState.activeEffect == name ? "checkmark" : "")
+                                .frame(width: 16)
+                            Text(name)
+                        }
                     }
                 }
             }
-            Divider()
         }
 
         // Sidelights submenu
@@ -48,9 +49,6 @@ struct MenuView: View {
         if appState.isConnected {
             Button(appState.isPaused ? "Resume" : "Pause") {
                 appState.togglePause()
-            }
-            Button("Quit Daemon") {
-                appState.stopDaemon()
             }
         } else {
             Button("Start Daemon") {

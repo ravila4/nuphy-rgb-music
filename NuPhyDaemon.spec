@@ -1,16 +1,27 @@
 # -*- mode: python ; coding: utf-8 -*-
+# PyInstaller spec for the NuPhy RGB daemon (onefile mode).
+# Build with: uv run pyinstaller NuPhyDaemon.spec --noconfirm
 
+import os
+import _sounddevice_data
+
+sd_dir = os.path.dirname(_sounddevice_data.__file__)
+portaudio = os.path.join(sd_dir, "portaudio-binaries", "libportaudio.dylib")
 
 a = Analysis(
-    ['src/nuphy_rgb/main.py'],
+    ["src/nuphy_rgb/main.py"],
     pathex=[],
-    binaries=[],
+    binaries=[(portaudio, "_sounddevice_data/portaudio-binaries")],
     datas=[],
-    hiddenimports=[],
+    hiddenimports=[
+        "_sounddevice_data",
+        "objc",
+        "CoreAudio",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=["tkinter", "matplotlib", "PIL", "scipy"],
     noarchive=False,
     optimize=0,
 )
@@ -19,32 +30,18 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
+    a.binaries,
+    a.datas,
     [],
-    exclude_binaries=True,
-    name='NuPhyDaemon',
+    name="NuPhyDaemon",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
-    target_arch=None,
+    target_arch="arm64",
     codesign_identity=None,
-    entitlements_file=None,
-)
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.datas,
-    strip=False,
-    upx=True,
-    upx_exclude=[],
-    name='NuPhyDaemon',
-)
-app = BUNDLE(
-    coll,
-    name='NuPhyDaemon.app',
-    icon=None,
-    bundle_identifier=None,
+    entitlements_file="entitlements.plist",
 )

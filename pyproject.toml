@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pyinstaller>=6.0"]
 
 [project.scripts]
 nuphy-rgb = "nuphy_rgb.main:main"
@@ -34,4 +34,5 @@ pythonpath = ["tests"]
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pyinstaller>=6.0",
 ]

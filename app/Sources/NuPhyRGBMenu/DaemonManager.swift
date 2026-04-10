@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.nuphy-rgb.menu", category: "DaemonMgr")
 
 /// Manages the lifecycle of the `nuphy-rgb` daemon process.
 @MainActor
@@ -20,16 +23,22 @@ final class DaemonManager {
         state = .starting
 
         let proc = Process()
-        // Resolve daemon binary: use `uv run` from the project directory
-        // (works in development; bundled .app will use embedded PyInstaller binary)
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        proc.arguments = ["uv", "run", "nuphy-rgb"]
-        proc.currentDirectoryURL = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()  // NuPhyRGBMenu/
-            .deletingLastPathComponent()  // Sources/
-            .deletingLastPathComponent()  // app/
-            .deletingLastPathComponent()  // project root
-        print("[DaemonMgr] cwd: \(proc.currentDirectoryURL?.path ?? "nil")")
+
+        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "NuPhyDaemon") {
+            logger.warning("using bundled daemon: \(bundled.path, privacy: .public)")
+            proc.executableURL = bundled
+            proc.arguments = []
+        } else {
+            // Dev mode: use uv run from project directory
+            logger.warning("dev mode: using uv run")
+            proc.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            proc.arguments = ["uv", "run", "nuphy-rgb"]
+            proc.currentDirectoryURL = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()  // NuPhyRGBMenu/
+                .deletingLastPathComponent()  // Sources/
+                .deletingLastPathComponent()  // app/
+                .deletingLastPathComponent()  // project root
+        }
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -39,7 +48,7 @@ final class DaemonManager {
         proc.terminationHandler = { [weak self] proc in
             let code = proc.terminationStatus
             Task { @MainActor in
-                print("[DaemonMgr] daemon exited (code=\(code))")
+                logger.warning("daemon exited (code=\(code))")
                 self?.handleTermination()
             }
         }
@@ -47,13 +56,17 @@ final class DaemonManager {
         try proc.run()
         process = proc
         state = .running
-        print("[DaemonMgr] started daemon (pid=\(proc.processIdentifier))")
+        logger.warning("started daemon (pid=\(proc.processIdentifier))")
 
         // Log stderr continuously in background
         let errHandle = stderrPipe.fileHandleForReading
         Task.detached {
-            for try await line in errHandle.bytes.lines {
-                print("[DaemonMgr] stderr: \(line)")
+            do {
+                for try await line in errHandle.bytes.lines {
+                    logger.warning("stderr: \(line, privacy: .public)")
+                }
+            } catch {
+                logger.error("stderr pipe closed: \(error)")
             }
         }
 
@@ -61,7 +74,7 @@ final class DaemonManager {
         let outHandle = stdoutPipe.fileHandleForReading
         Task.detached { [weak self] in
             for try await line in outHandle.bytes.lines {
-                print("[DaemonMgr] stdout: \(line)")
+                logger.warning("stdout: \(line, privacy: .public)")
                 if line.contains("IPC:") {
                     let path = line.components(separatedBy: "IPC:").last?
                         .trimmingCharacters(in: .whitespaces) ?? ""
