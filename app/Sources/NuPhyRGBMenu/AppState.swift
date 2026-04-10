@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 import os
 
 private let logger = Logger(subsystem: "com.nuphy-rgb.menu", category: "AppState")
@@ -74,6 +74,11 @@ class AppState: DaemonClientDelegate {
         Task {
             await manager.stop(via: client)
         }
+    }
+
+    func quitApp() async {
+        await manager.stop(via: client)
+        NSApplication.shared.terminate(nil)
     }
 
     // MARK: - Effect switching

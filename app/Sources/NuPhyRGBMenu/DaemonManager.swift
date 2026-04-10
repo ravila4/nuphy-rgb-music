@@ -73,8 +73,9 @@ final class DaemonManager {
             object: nil,
             queue: .main
         ) { _ in
-            logger.warning("app terminating, killing daemon pid=\(pid)")
-            kill(pid, SIGTERM)
+            logger.warning("app terminating, killing daemon process group pid=\(pid)")
+            // Negative PID kills the entire process group (PyInstaller bootloader + Python child)
+            kill(-pid, SIGTERM)
         }
 
         // Log stderr continuously in background
