@@ -17,6 +17,8 @@ a = Analysis(
         "_sounddevice_data",
         "objc",
         "CoreAudio",
+        # Dynamically imported by user plugins in ~/.config/nuphy-rgb/
+        "nuphy_rgb.plugin_api",
     ],
     hookspath=[],
     hooksconfig={},
