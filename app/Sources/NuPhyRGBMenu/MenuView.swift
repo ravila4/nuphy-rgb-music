@@ -65,6 +65,17 @@ struct MenuView: View {
                 attributes: [.font: NSFont.systemFont(ofSize: 11)]
             ))
             credits.append(NSAttributedString(
+                string: "GitHub",
+                attributes: [
+                    .font: NSFont.systemFont(ofSize: 11),
+                    .link: URL(string: "https://github.com/ravila4/nuphy-rgb-music")!,
+                ]
+            ))
+            credits.append(NSAttributedString(
+                string: "  ·  ",
+                attributes: [.font: NSFont.systemFont(ofSize: 11)]
+            ))
+            credits.append(NSAttributedString(
                 string: "Support on Ko-fi",
                 attributes: [
                     .font: NSFont.systemFont(ofSize: 11),
