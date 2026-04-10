@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let logger = Logger(subsystem: "com.nuphy-rgb.menu", category: "AppState")
 
 /// Central state for the menu bar app.
 /// Observable so SwiftUI views update automatically.
@@ -13,25 +16,31 @@ class AppState: DaemonClientDelegate {
     var sidelights: [String] = []
     var activeEffect: String?
     var activeSidelight: String?
+    var isConnected = false
     var audioLevel: Double = 0.0
+    var isPaused = false
 
     var statusIcon: String {
-        client.isConnected ? "waveform" : "waveform.slash"
+        if isPaused { return "pause.circle" }
+        return isConnected ? "waveform" : "waveform.slash"
     }
 
     init() {
         client.delegate = self
+        logger.warning("init called")
         connectOrStart()
     }
 
     // MARK: - Connection
 
     func connectOrStart() {
-        if manager.detectRunning() {
-            print("[AppState] daemon already running, connecting...")
+        let running = manager.detectRunning()
+        logger.warning("connectOrStart: detectRunning=\(running)")
+        if running {
+            logger.warning("connecting to existing daemon")
             client.connect()
         } else {
-            print("[AppState] no daemon found, starting...")
+            logger.warning("starting daemon")
             startDaemon()
         }
     }
@@ -39,20 +48,24 @@ class AppState: DaemonClientDelegate {
     func startDaemon() {
         do {
             try manager.start()
-            print("[AppState] daemon started, waiting for socket...")
+            let socketPath = manager.effectiveSocketPath
+            logger.warning("daemon started, waiting for socket at \(socketPath)")
             Task {
-                for _ in 0..<20 {  // up to 5 seconds
+                for i in 0..<20 {  // up to 5 seconds
                     try await Task.sleep(for: .milliseconds(250))
-                    if DaemonClient.probe(socketPath: manager.effectiveSocketPath) {
-                        print("[AppState] socket ready, connecting")
-                        client.connect(socketPath: manager.effectiveSocketPath)
+                    let path = self.manager.effectiveSocketPath
+                    let ready = DaemonClient.probe(socketPath: path)
+                    logger.warning("poll \(i): probe=\(ready) path=\(path)")
+                    if ready {
+                        logger.warning("socket ready, connecting")
+                        self.client.connect(socketPath: path)
                         return
                     }
                 }
-                print("[AppState] timed out waiting for daemon socket")
+                logger.warning("timed out waiting for daemon socket")
             }
         } catch {
-            print("[AppState] failed to start daemon: \(error)")
+            logger.error("failed to start daemon: \(error)")
         }
     }
 
@@ -63,6 +76,17 @@ class AppState: DaemonClientDelegate {
     }
 
     // MARK: - Effect switching
+
+    func togglePause() {
+        Task {
+            do {
+                let result = try await client.setPaused(!isPaused)
+                isPaused = result.paused
+            } catch {
+                print("[AppState] setPaused error: \(error)")
+            }
+        }
+    }
 
     func selectEffect(_ name: String) {
         Task {
@@ -94,13 +118,14 @@ class AppState: DaemonClientDelegate {
                 let status = try await client.getStatus()
                 activeEffect = status.effect
                 activeSidelight = status.sidelight
+                isPaused = status.paused
 
                 let list = try await client.listEffects()
                 effects = list.effects
                 sidelights = list.sidelights
-                print("[AppState] refreshed: \(effects.count) effects, \(sidelights.count) sidelights")
+                logger.warning("refreshed: \(self.effects.count) effects, \(self.sidelights.count) sidelights")
             } catch {
-                print("[AppState] refresh error: \(error)")
+                logger.error("refresh error: \(error)")
             }
         }
     }
@@ -108,17 +133,20 @@ class AppState: DaemonClientDelegate {
     // MARK: - DaemonClientDelegate
 
     func daemonClientDidConnect(_ client: DaemonClient) {
-        print("[AppState] connected to daemon")
+        logger.warning("connected to daemon")
+        isConnected = true
         refreshState()
     }
 
     func daemonClientDidDisconnect(_ client: DaemonClient) {
-        print("[AppState] disconnected from daemon")
+        logger.warning("disconnected from daemon")
+        isConnected = false
         effects = []
         sidelights = []
         activeEffect = nil
         activeSidelight = nil
         audioLevel = 0.0
+        isPaused = false
     }
 
     func daemonClient(_ client: DaemonClient, didReceiveAudioLevel rms: Double) {
@@ -131,5 +159,9 @@ class AppState: DaemonClientDelegate {
 
     func daemonClient(_ client: DaemonClient, didChangeSidelight name: String) {
         activeSidelight = name
+    }
+
+    func daemonClient(_ client: DaemonClient, didChangePaused paused: Bool) {
+        isPaused = paused
     }
 }

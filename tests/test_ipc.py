@@ -421,6 +421,75 @@ class TestSetParam:
         assert "missing required param" in resp["error"]["message"]
 
 
+class TestSetPaused:
+    def test_pause(self, server, state) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_paused",
+            "params": {"paused": True}, "id": 1,
+        })
+        assert resp["result"]["paused"] is True
+        assert state.paused is True
+
+    def test_resume(self, server, state) -> None:
+        srv, sock_path = server
+        state.set_paused(True)
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_paused",
+            "params": {"paused": False}, "id": 1,
+        })
+        assert resp["result"]["paused"] is False
+        assert state.paused is False
+
+    def test_rejects_non_boolean(self, server) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_paused",
+            "params": {"paused": "false"}, "id": 1,
+        })
+        assert "error" in resp
+        assert "boolean" in resp["error"]["message"]
+
+    def test_get_status_includes_paused(self, server, state) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_status", "id": 1,
+        })
+        assert resp["result"]["paused"] is False
+
+        state.set_paused(True)
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_status", "id": 2,
+        })
+        assert resp["result"]["paused"] is True
+
+    def test_paused_changed_notification(self, server) -> None:
+        srv, sock_path = server
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        s.connect(str(sock_path))
+        # Establish connection.
+        s.sendall(json.dumps({
+            "jsonrpc": "2.0", "method": "get_status", "id": 1,
+        }).encode() + b"\n")
+        data = b""
+        while b"\n" not in data:
+            data += s.recv(4096)
+        data = b""
+
+        srv.notify_paused_changed(True)
+
+        s.settimeout(2.0)
+        while b"\n" not in data:
+            data += s.recv(4096)
+        s.close()
+
+        notification = json.loads(data)
+        assert notification["jsonrpc"] == "2.0"
+        assert notification["method"] == "paused_changed"
+        assert notification["params"] == {"paused": True}
+        assert "id" not in notification
+
+
 class TestGetSideParams:
     def test_returns_side_params(self, param_server) -> None:
         srv, sock_path = param_server

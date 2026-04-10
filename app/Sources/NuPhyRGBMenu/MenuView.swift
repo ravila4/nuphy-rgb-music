@@ -4,7 +4,7 @@ struct MenuView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        if !appState.client.isConnected {
+        if !appState.isConnected {
             Text("Not Connected")
                 .foregroundStyle(.secondary)
             Divider()
@@ -45,8 +45,11 @@ struct MenuView: View {
         }
 
         // Daemon control
-        if appState.client.isConnected {
-            Button("Stop Daemon") {
+        if appState.isConnected {
+            Button(appState.isPaused ? "Resume" : "Pause") {
+                appState.togglePause()
+            }
+            Button("Quit Daemon") {
                 appState.stopDaemon()
             }
         } else {

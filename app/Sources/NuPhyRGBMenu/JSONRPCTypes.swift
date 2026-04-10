@@ -2,11 +2,16 @@ import Foundation
 
 // MARK: - Outgoing
 
-struct JSONRPCRequest: Encodable, Sendable {
-    let jsonrpc = "2.0"
+struct JSONRPCRequest: Sendable {
     let method: String
-    let params: [String: String]?
+    let params: [String: any Sendable]?
     let id: Int
+
+    func toData() throws -> Data {
+        var obj: [String: Any] = ["jsonrpc": "2.0", "method": method, "id": id]
+        if let p = params { obj["params"] = p }
+        return try JSONSerialization.data(withJSONObject: obj)
+    }
 }
 
 // MARK: - Incoming
@@ -63,6 +68,11 @@ struct StatusResult: Decodable, Sendable {
     let effect: String
     let sidelight: String?
     let running: Bool
+    let paused: Bool
+}
+
+struct PausedResult: Decodable, Sendable {
+    let paused: Bool
 }
 
 struct ListEffectsResult: Decodable, Sendable {

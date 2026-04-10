@@ -97,6 +97,7 @@ class _Dispatcher:
             "prev_effect": self._prev_effect,
             "next_sidelight": self._next_sidelight,
             "prev_sidelight": self._prev_sidelight,
+            "set_paused": self._set_paused,
             "quit": self._quit,
             "get_params": self._get_params,
             "set_param": self._set_param,
@@ -117,6 +118,7 @@ class _Dispatcher:
             "effect": s.key.name,
             "sidelight": s.side.name if s.side is not None else None,
             "running": not s.quit_event.is_set(),
+            "paused": s.paused,
         }
 
     def _list_effects(self, _params: dict | None) -> dict:
@@ -159,6 +161,15 @@ class _Dispatcher:
             raise ValueError("sidelights not enabled")
         self._state.side.prev()
         return {"name": self._state.side.name}
+
+    def _set_paused(self, params: dict | None) -> dict:
+        paused = _require_param(params, "paused")
+        if not isinstance(paused, bool):
+            raise ValueError(
+                f"paused must be a boolean, got {type(paused).__name__}"
+            )
+        self._state.set_paused(paused)
+        return {"paused": self._state.paused}
 
     def _quit(self, _params: dict | None) -> dict:
         self._state.request_quit()
@@ -363,6 +374,9 @@ class IPCServer:
 
     def notify_sidelight_changed(self, name: str) -> None:
         self.broadcast(_notification("sidelight_changed", {"name": name}))
+
+    def notify_paused_changed(self, paused: bool) -> None:
+        self.broadcast(_notification("paused_changed", {"paused": paused}))
 
     def notify_audio_level(self, raw_rms: float) -> None:
         self.broadcast(_notification("audio_level", {"raw_rms": round(raw_rms, 4)}))

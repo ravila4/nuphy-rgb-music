@@ -1,4 +1,7 @@
 import Foundation
+import os
+
+private let log = Logger(subsystem: "com.nuphy-rgb.menu", category: "Client")
 
 /// Callback types for push notifications from the daemon.
 @MainActor
@@ -6,6 +9,7 @@ protocol DaemonClientDelegate: AnyObject {
     func daemonClient(_ client: DaemonClient, didReceiveAudioLevel rms: Double)
     func daemonClient(_ client: DaemonClient, didChangeEffect name: String)
     func daemonClient(_ client: DaemonClient, didChangeSidelight name: String)
+    func daemonClient(_ client: DaemonClient, didChangePaused paused: Bool)
     func daemonClientDidConnect(_ client: DaemonClient)
     func daemonClientDidDisconnect(_ client: DaemonClient)
 }
@@ -57,7 +61,8 @@ final class DaemonClient {
             }
         }
         guard connectResult == 0 else {
-            print("[Client] connect failed: errno=\(errno) (\(String(cString: strerror(errno))))")
+            let err = errno
+            log.error("connect failed: errno=\(err) (\(String(cString: strerror(err))))")
             close(fd)
             fd = -1
             return
@@ -66,6 +71,7 @@ final class DaemonClient {
         // Separate file descriptors for read and write to avoid conflicts.
         let readFd = dup(fd)
         guard readFd >= 0 else {
+            log.error("dup failed")
             close(fd)
             fd = -1
             return
@@ -73,9 +79,9 @@ final class DaemonClient {
 
         writeHandle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
         isConnected = true
-        print("[Client] connected to \(path)")
-        delegate?.daemonClientDidConnect(self)
+        log.warning("connected to \(path)")
         startReadLoop(readFd: readFd)
+        delegate?.daemonClientDidConnect(self)
     }
 
     func disconnect() {
@@ -115,6 +121,11 @@ final class DaemonClient {
     func setSidelight(name: String) async throws -> EffectResult {
         let data = try await sendRequest(method: "set_sidelight", params: ["name": name])
         return try JSONDecoder().decode(EffectResult.self, from: data)
+    }
+
+    func setPaused(_ paused: Bool) async throws -> PausedResult {
+        let data = try await sendRequest(method: "set_paused", params: ["paused": paused])
+        return try JSONDecoder().decode(PausedResult.self, from: data)
     }
 
     func quit() async throws {
@@ -164,7 +175,7 @@ final class DaemonClient {
 
     // MARK: - Internal
 
-    private func sendRequest(method: String, params: [String: String]? = nil) async throws -> Data {
+    private func sendRequest(method: String, params: [String: any Sendable]? = nil) async throws -> Data {
         guard isConnected, let handle = writeHandle else {
             throw DaemonClientError.notConnected
         }
@@ -173,7 +184,8 @@ final class DaemonClient {
         nextId += 1
 
         let request = JSONRPCRequest(method: method, params: params, id: id)
-        let data = try JSONEncoder().encode(request)
+        let data = try request.toData()
+        log.warning("sendRequest: \(method, privacy: .public) id=\(id) payload=\(String(data: data, encoding: .utf8) ?? "nil", privacy: .public)")
         let payload = data + Data([0x0A])  // newline-delimited JSON
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -196,17 +208,25 @@ final class DaemonClient {
         let readHandle = FileHandle(fileDescriptor: readFd, closeOnDealloc: true)
 
         readTask = Task.detached { [weak self] in
-            do {
-                for try await line in readHandle.bytes.lines {
-                    guard !Task.isCancelled else { break }
-                    let lineData = Data(line.utf8)
-                    guard let message = JSONRPCMessage.parse(lineData) else { continue }
+            log.warning("read loop started on fd=\(readFd)")
+            var buffer = Data()
 
+            while !Task.isCancelled {
+                let data = readHandle.availableData
+                if data.isEmpty { break }
+                buffer.append(data)
+
+                // Process complete lines
+                while let newlineRange = buffer.range(of: Data([0x0A])) {
+                    let lineData = buffer.subdata(in: buffer.startIndex..<newlineRange.lowerBound)
+                    buffer.removeSubrange(buffer.startIndex...newlineRange.lowerBound)
+
+                    guard let message = JSONRPCMessage.parse(lineData) else { continue }
                     await self?.handleMessage(message)
                 }
-            } catch {
-                // Socket closed or read error — fall through to disconnect.
             }
+
+            log.warning("read loop ended")
 
             if let self = self {
                 await self.handleReadLoopEnded()
@@ -216,6 +236,7 @@ final class DaemonClient {
 
     @MainActor
     private func handleMessage(_ message: JSONRPCMessage) {
+        log.warning("handleMessage: \(String(describing: message), privacy: .public)")
         switch message {
         case .response(let id, let resultData):
             guard let completion = pending.removeValue(forKey: id) else { return }
@@ -245,6 +266,10 @@ final class DaemonClient {
         case "sidelight_changed":
             if let sidelight = try? decoder.decode(EffectResult.self, from: paramsData) {
                 delegate?.daemonClient(self, didChangeSidelight: sidelight.name)
+            }
+        case "paused_changed":
+            if let result = try? decoder.decode(PausedResult.self, from: paramsData) {
+                delegate?.daemonClient(self, didChangePaused: result.paused)
             }
         default:
             break

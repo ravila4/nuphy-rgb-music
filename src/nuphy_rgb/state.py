@@ -141,6 +141,9 @@ class DaemonState:
             else None
         )
         self.quit_event = threading.Event()
+        self._paused = False
+        self._paused_changed = False
+        self._pause_lock = threading.Lock()
         self._visualizers = list(visualizers)
         self._side_visualizers = list(side_visualizers)
 
@@ -189,6 +192,28 @@ class DaemonState:
     def set_active_side_param(self, name: str, value: float) -> VisualizerParam:
         """Set a param on the active sidelight effect."""
         return self._set_param(self._active_sidelight(), name, value)
+
+    @property
+    def paused(self) -> bool:
+        with self._pause_lock:
+            return self._paused
+
+    def set_paused(self, paused: bool) -> bool:
+        """Set pause state. Returns True if state actually changed."""
+        with self._pause_lock:
+            if self._paused == paused:
+                return False
+            self._paused = paused
+            self._paused_changed = True
+            return True
+
+    def poll_paused_changed(self) -> bool | None:
+        """Return current paused state if changed since last poll, else None."""
+        with self._pause_lock:
+            if self._paused_changed:
+                self._paused_changed = False
+                return self._paused
+            return None
 
     def request_quit(self) -> None:
         """Signal the main loop to exit."""
