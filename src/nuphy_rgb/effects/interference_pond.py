@@ -14,6 +14,7 @@ import numpy as np
 from nuphy_rgb.audio import AudioFrame, ExpFilter
 from nuphy_rgb.effects.grid import LED_X, LED_Y, NUM_LEDS
 from nuphy_rgb.visualizer import freq_to_hue
+from nuphy_rgb.visualizer_params import VisualizerParam
 
 _MAX_RIPPLES = 8
 _AMPLITUDE_THRESHOLD = 0.01
@@ -47,6 +48,20 @@ class InterferencePond:
         self._peak_wave: float = 0.01
         self._rng = np.random.default_rng(42)
         self._brightness_filter = ExpFilter(alpha_rise=0.9, alpha_decay=0.3)
+        self.params: dict[str, VisualizerParam] = {
+            "brightness_gain": VisualizerParam(
+                value=5.0, default=5.0, min=1.0, max=10.0,
+                description="RMS → brightness sensitivity (higher = brighter for quiet audio)",
+            ),
+            "ripple_decay": VisualizerParam(
+                value=0.96, default=0.96, min=0.90, max=0.99,
+                description="Ripple amplitude decay per frame (higher = longer-lived ripples)",
+            ),
+            "wavelength": VisualizerParam(
+                value=0.15, default=0.15, min=0.08, max=0.30,
+                description="Base wavelength in grid units (lower = fine bands, higher = chunky)",
+            ),
+        }
 
     # ------------------------------------------------------------------
     # Public interface
@@ -76,7 +91,7 @@ class InterferencePond:
 
     def _spawn_ripple(self, frame: AudioFrame) -> None:
         hue = freq_to_hue(frame.dominant_freq)
-        wavelength = 0.15 + 0.1 * frame.bass
+        wavelength = self.params["wavelength"].get() + 0.1 * frame.bass
         amplitude = 1.0 + min(frame.onset_strength * 0.3, 0.3)
         cx = float(self._rng.uniform(0.0, 1.0))
         cy = float(self._rng.uniform(0.0, 1.0))
@@ -91,7 +106,7 @@ class InterferencePond:
         self._ripples.append(ripple)
 
     def _update_ripples(self, dt: float, bass: float) -> None:
-        decay = 0.96 - 0.02 * bass
+        decay = self.params["ripple_decay"].get() - 0.02 * bass
         expand = dt * (0.4 + 0.3 * bass)
         survivors = deque(maxlen=_MAX_RIPPLES)
         for r in self._ripples:
@@ -133,10 +148,12 @@ class InterferencePond:
         self._peak_wave = max(peak, self._peak_wave * 0.98, 1e-6)
         norm_wave = wave_sum / self._peak_wave
 
-        # Brightness from raw RMS with squared curve for dynamic range
-        scaled = min(frame.raw_rms * 3.0, 1.0)
-        brightness_scale = self._brightness_filter.update(scaled ** 2)
-        brightness_arr = np.abs(norm_wave) * brightness_scale
+        # Brightness from raw RMS, linear curve; sqrt on the normalized
+        # wave lifts mid-range LEDs so the pattern reads clearly instead of
+        # collapsing into near-black around a single peak.
+        scaled = min(frame.raw_rms * self.params["brightness_gain"].get(), 1.0)
+        brightness_scale = self._brightness_filter.update(scaled)
+        brightness_arr = np.sqrt(np.abs(norm_wave)) * brightness_scale
 
         # Blended hue via circular mean
         blended_angle = np.arctan2(sin_weighted, cos_weighted)
