@@ -1,9 +1,20 @@
-"""Event Horizon visualizer — wandering black-hole singularity with accretion disk.
+"""Event Horizon — the event horizon swallows events.
 
-The singularity wanders in a Lissajous-like path smoothed by ExpFilters.
-On beats, a gravitational collapse flash fires and particles stream inward
-from the outer edge of the disk.
+A cool, dormant accretion disk surrounds a fixed 2x2 singularity. Bass beats
+inject warm rings at the outer edge of the disk; each ring falls inward over
+several frames, shifting the local disk hue from indigo through magenta to red
+as it advects, and is extinguished the instant it crosses the photon ring.
+
+Loudness (RMS) inflates the whole disk — quiet passages collapse the ring
+radius and outer extent into a tight halo; loud passages sprawl it outward,
+giving warm rings more real estate to traverse before being swallowed.
+
+Colors are structural: indigo base everywhere, amber/red only where a warm
+ring currently lives, hot blue at the photon ring core. Music modulates
+motion, brightness, and the temperature field — but never the base palette.
 """
+
+from __future__ import annotations
 
 import colorsys
 import math
@@ -11,226 +22,283 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from nuphy_rgb.audio import AudioFrame, ExpFilter
-from nuphy_rgb.effects.grid import LED_X, LED_Y, NUM_LEDS
-from nuphy_rgb.visualizer import freq_to_hue
+from nuphy_rgb.plugin_api import (
+    MAX_COLS,
+    NUM_LEDS,
+    NUM_ROWS,
+    LED_X,
+    LED_Y,
+    AudioFrame,
+    ExpFilter,
+    VisualizerParam,
+)
 
-# ---------------------------------------------------------------------------
-# Internal state helpers
-# ---------------------------------------------------------------------------
+_KEY_X = LED_X * (MAX_COLS - 1)          # 0..15
+_KEY_Y = LED_Y * (NUM_ROWS - 1)          # 0..5
 
-_MAX_PARTICLES = 12
+_DEFAULT_DT = 1.0 / 30.0
+_MAX_RINGS = 6
+
+# Hue trajectory for the temperature field.
+# warmth=0 -> COOL_HUE (indigo), warmth=1 -> COOL_HUE + HUE_SPAN (wraps to red).
+# The span passes through violet -> magenta -> red-orange on the short path.
+_COOL_HUE = 0.68
+_HUE_SPAN = 0.34   # 0.68 -> 1.02 (== 0.02)
+_INNER_HUE = 0.58  # photon-ring core stays hot blue
 
 
 @dataclass
-class _Particle:
-    x: float
-    y: float
-    life: int   # frames remaining
-    hue: float
-
-
-# ---------------------------------------------------------------------------
-# Visualizer
-# ---------------------------------------------------------------------------
+class _InfallRing:
+    radius: float      # current radius in key-units
+    intensity: float   # [0..1] warmth contribution
 
 
 class EventHorizon:
-    """Wandering black-hole singularity with accretion disk.
-
-    Parameters
-    ----------
-    num_leds:
-        Number of LEDs (default 84).
-    seed:
-        RNG seed for deterministic output in tests.
-    """
+    """Event horizon that swallows warm bass events falling through its disk."""
 
     name = "Event Horizon"
 
-    def __init__(self, num_leds: int = NUM_LEDS, seed: int = 42) -> None:
-        self._num_leds = num_leds
-        self._rng = np.random.default_rng(seed)
-
-        # Singularity position filters
+    def __init__(self) -> None:
+        # Singularity drift (in key-units)
         self._sx_filter = ExpFilter(alpha_rise=0.3, alpha_decay=0.08)
         self._sy_filter = ExpFilter(alpha_rise=0.3, alpha_decay=0.08)
 
-        # Phase accumulator for the Lissajous path
-        self._phase: float = 0.0
+        self._phase = 0.0
+        self._disk_rotation = 0.0
+        self._collapse_intensity = 0.0
 
-        # Accretion disk rotation angle (radians)
-        self._disk_rotation: float = 0.0
-
-        # Gravitational collapse state
-        self._collapse_frames: int = 0
-        self._collapse_intensity: float = 0.0
-
-        # Spiral arm boost on high-beat (3-frame counter)
-        self._spiral_frames: int = 0
-
-        # Particles
-        self._particles: list[_Particle] = []
-
-        # Overall brightness smoothing (squared RMS)
         self._brightness_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
+        self._spin_energy = ExpFilter(alpha_rise=0.4, alpha_decay=0.04)
+        # Slow envelope — the disk inflates with sustained loudness, not per-beat noise.
+        self._breath_energy = ExpFilter(alpha_rise=0.15, alpha_decay=0.03)
 
-        # Pre-cache LED positions as numpy arrays (sliced to num_leds)
-        self._led_x = LED_X[:num_leds]
-        self._led_y = LED_Y[:num_leds]
+        self._infall_rings: list[_InfallRing] = []
+        self._last_ts: float | None = None
 
-    # ------------------------------------------------------------------
-    # Public interface
-    # ------------------------------------------------------------------
+        self.params: dict[str, VisualizerParam] = {
+            "hole_half_w": VisualizerParam(
+                value=1.0, default=1.0, min=0.5, max=2.0,
+                description="Horizontal half-width of the event horizon (key-units)",
+            ),
+            "hole_half_h": VisualizerParam(
+                value=1.0, default=1.0, min=0.5, max=2.0,
+                description="Vertical half-height of the event horizon (key-units)",
+            ),
+            "ring_radius": VisualizerParam(
+                value=2.3, default=2.3, min=1.5, max=4.0,
+                description="Photon-ring base radius (key-units)",
+            ),
+            "ring_width": VisualizerParam(
+                value=0.9, default=0.9, min=0.3, max=2.0,
+                description="Gaussian sigma of the photon ring (key-units)",
+            ),
+            "disk_extent": VisualizerParam(
+                value=5.0, default=5.0, min=3.0, max=7.0,
+                description="Base outer radius of the disk fall-off (key-units)",
+            ),
+            "disk_breath": VisualizerParam(
+                value=0.55, default=0.55, min=0.0, max=0.9,
+                description="How much loudness inflates the accretion disk",
+            ),
+            "drift_speed": VisualizerParam(
+                value=1.0, default=1.0, min=0.2, max=3.0,
+                description="Singularity drift speed multiplier",
+            ),
+            "rotation_speed": VisualizerParam(
+                value=0.12, default=0.12, min=0.0, max=0.4,
+                description="Base disk rotation (rad/frame)",
+            ),
+            "num_arms": VisualizerParam(
+                value=3.0, default=3.0, min=2.0, max=5.0,
+                description="Number of spiral arms (integer, 2-5)",
+            ),
+            "arm_sharpness": VisualizerParam(
+                value=8.0, default=8.0, min=2.0, max=16.0,
+                description="Angular narrowness of spiral arms",
+            ),
+            "spiral_pitch": VisualizerParam(
+                value=0.6, default=0.6, min=0.0, max=1.5,
+                description="How much arm angle winds with radius",
+            ),
+            "infall_speed": VisualizerParam(
+                value=0.08, default=0.08, min=0.02, max=0.25,
+                description="How fast warm rings fall inward (key-units/frame)",
+            ),
+            "warmth_width": VisualizerParam(
+                value=0.9, default=0.9, min=0.3, max=2.0,
+                description="Radial thickness of each warm infalling ring",
+            ),
+            "warmth_gain": VisualizerParam(
+                value=1.2, default=1.2, min=0.0, max=2.5,
+                description="How strongly bass events inject warmth",
+            ),
+            "brightness_gain": VisualizerParam(
+                value=1.0, default=1.0, min=0.4, max=2.5,
+                description="Global brightness scale",
+            ),
+        }
 
     def render(self, frame: AudioFrame) -> list[tuple[int, int, int]]:
-        """Render one frame from an AudioFrame, returning ``num_leds`` RGB tuples."""
+        p = {k: v.value for k, v in self.params.items()}
 
-        # ---- 1. Advance singularity position --------------------------------
-        base_rate = 0.018
-        speed = 0.04
-        self._phase += base_rate + frame.mids * speed
+        if self._last_ts is None:
+            dt = _DEFAULT_DT
+        else:
+            dt = max(1e-3, min(0.1, frame.timestamp - self._last_ts))
+        self._last_ts = frame.timestamp
+        frame_scale = dt / _DEFAULT_DT
 
-        raw_x = 0.5 + 0.4 * math.sin(self._phase)
-        raw_y = 0.5 + 0.35 * math.cos(self._phase * 0.618)
+        # === Singularity drift ===
+        self._phase += (0.018 + frame.mids * 0.04) * p["drift_speed"] * frame_scale
+        cx = (MAX_COLS - 1) * 0.5
+        cy = (NUM_ROWS - 1) * 0.5
+        amp_x = (MAX_COLS - 1) * 0.32
+        amp_y = (NUM_ROWS - 1) * 0.30
+        raw_x = cx + amp_x * math.sin(self._phase)
+        raw_y = cy + amp_y * math.cos(self._phase * 0.618)
         sx = self._sx_filter.update(raw_x)
         sy = self._sy_filter.update(raw_y)
 
-        # ---- 2. Advance disk rotation ---------------------------------------
-        base_rot = 0.05
-        rotation_factor = 0.3
-        self._disk_rotation += base_rot + frame.bass * rotation_factor
+        # === Loudness -> accretion disk breathes ===
+        breath = self._breath_energy.update(min(1.0, frame.raw_rms * 3.0))
+        disk_scale = 1.0 + p["disk_breath"] * (2.0 * breath - 1.0)
+        # Ring must stay outside the void or the whole disk disappears into the hole.
+        min_ring = max(p["hole_half_w"], p["hole_half_h"]) + 0.4
+        ring_radius_eff = max(min_ring, p["ring_radius"] * disk_scale)
+        disk_extent_eff = max(ring_radius_eff + 0.5, p["disk_extent"] * disk_scale)
 
-        # ---- 3. Collapse trigger / decay ------------------------------------
+        # === Disk rotation gated by audio energy ===
+        spin = self._spin_energy.update(min(1.0, frame.raw_rms * 4.0))
+        self._disk_rotation += (
+            p["rotation_speed"] * spin + frame.bass * 0.35
+        ) * frame_scale
+
+        # === Infall ring field: bass events fall inward and are swallowed ===
+        self._update_infall_rings(
+            frame, frame_scale, ring_radius_eff, disk_extent_eff, p
+        )
+
+        # === Collapse flash (luminance pulse on beat) ===
         if frame.is_beat:
-            self._collapse_frames = 12
-            self._collapse_intensity = 1.0 + min(frame.onset_strength * 0.5, 0.5)
+            self._collapse_intensity = min(1.0, 0.9 + frame.onset_strength * 0.4)
         else:
-            if self._collapse_frames > 0:
-                self._collapse_frames -= 1
-            self._collapse_intensity *= 0.75
-
+            self._collapse_intensity *= 0.78
         collapsing = self._collapse_intensity > 0.01
 
-        # ---- 4. High-beat spiral arm boost -----------------------------------
-        if frame.high_beat:
-            self._spiral_frames = 3
-        elif self._spiral_frames > 0:
-            self._spiral_frames -= 1
+        arms = float(max(2, min(5, int(round(p["num_arms"])))))
 
-        # ---- 5. Particles ---------------------------------------------------
-        if frame.is_beat:
-            self._spawn_particles(sx, sy, frame.dominant_freq)
-        self._update_particles(sx, sy, frame.spectral_flux)
+        # === Per-LED field in key-units ===
+        dx = _KEY_X - sx
+        dy = _KEY_Y - sy
+        r = np.hypot(dx, dy)
+        theta = np.arctan2(dy, dx)
 
-        # ---- 6. Per-LED vectorised computation ------------------------------
-        dx = self._led_x - sx
-        dy = self._led_y - sy
-        dist = np.hypot(dx, dy)           # raw distance
-        norm_dist = dist / 0.6            # normalise; 0.6 ~ half diagonal
-        angle = np.arctan2(dy, dx)        # [-pi, pi]
+        # Event horizon: fixed 2x2 void (does NOT breathe)
+        hole_w = p["hole_half_w"]
+        hole_h = p["hole_half_h"]
+        void_mask = (np.abs(dx) < hole_w) & (np.abs(dy) < hole_h)
 
-        # ---- 7. Normal-mode brightness --------------------------------------
-        # Glowing ring at norm_dist ~ 0.3
-        ring_b = np.exp(-((norm_dist - 0.3) ** 2) * 30.0)
-        # Spiral arm modulation (extra arms on high-beat)
-        spiral_arms = 2.0 + 4.0 * (self._spiral_frames > 0)
-        spiral = 0.5 + 0.5 * np.sin(
-            spiral_arms * angle - self._disk_rotation + norm_dist * 6.0
+        # Photon ring (Gaussian annulus, follows breathing radius)
+        sigma = p["ring_width"]
+        ring = np.exp(-(((r - ring_radius_eff) / sigma) ** 2))
+
+        # Disk fall-off envelope (soft outer cutoff)
+        disk_env = np.exp(
+            -np.clip(r - ring_radius_eff, 0.0, None)
+            / max(0.1, disk_extent_eff - ring_radius_eff) * 2.5
         )
-        brightness = ring_b * spiral
-        # Void centre: LEDs very close to singularity are dark
-        brightness = np.where(norm_dist < 0.08, 0.0, brightness)
+        disk_env = np.where(r > disk_extent_eff, 0.0, disk_env)
 
-        # ---- 8. Distance-based hue -----------------------------------------
-        effective_freq = max(frame.dominant_freq, 80.0)
-        freq_shift = freq_to_hue(effective_freq, min_freq=80.0, max_freq=4000.0)
-        # violet inner (<0.25), blue-white ring, amber outer
-        inner_mask = norm_dist < 0.25
-        ring_mask = (norm_dist >= 0.25) & (norm_dist < 0.55)
-        outer_mask = norm_dist >= 0.55
+        # Spiral arms — brightness feature only, no color
+        arm_phase = arms * (theta - self._disk_rotation) - p["spiral_pitch"] * r
+        arm = np.clip(np.cos(arm_phase), 0.0, 1.0) ** p["arm_sharpness"]
 
-        hue = np.zeros(self._num_leds, dtype=np.float64)
-        hue[inner_mask] = (0.75 + freq_shift * 0.1) % 1.0   # violet-ish
-        hue[ring_mask] = (0.58 + freq_shift * 0.15) % 1.0   # blue-white
-        hue[outer_mask] = (0.08 + freq_shift * 0.2) % 1.0   # amber-ish
+        base_ring = ring * 0.85
+        outer_glow = disk_env * 0.35
+        arm_boost = disk_env * 0.7 * arm
+        brightness = base_ring + outer_glow + arm_boost
 
-        saturation = np.ones(self._num_leds, dtype=np.float64)
-        # Blue-white ring: lower saturation for whitish glow
-        saturation[ring_mask] = 0.4 + ring_b[ring_mask] * 0.3
+        # === Warmth field: sum of gaussian contributions from live infall rings ===
+        warmth = np.zeros(NUM_LEDS, dtype=np.float64)
+        ww = p["warmth_width"]
+        for rg in self._infall_rings:
+            warmth += rg.intensity * np.exp(-((r - rg.radius) / ww) ** 2)
+        # Warmth only lives on the disk — no stray glow in empty space
+        warmth = np.clip(warmth * disk_env, 0.0, 1.0)
 
-        # ---- 9. Collapse override -------------------------------------------
+        # === Color: cool indigo base, warmth lerps hue toward red via magenta ===
+        hue = (_COOL_HUE + warmth * _HUE_SPAN) % 1.0
+
+        # Inner core (inside photon ring) stays hot blue
+        inner_mask = r < ring_radius_eff - sigma * 0.3
+        hue[inner_mask] = _INNER_HUE
+
+        saturation = np.full(NUM_LEDS, 0.95, dtype=np.float64)
+        saturation[inner_mask] = 0.3 + (1.0 - ring[inner_mask]) * 0.45
+        saturation = saturation - arm * 0.15
+
+        # Warm rings get a brightness boost so the wave is visible, not just tinted
+        brightness = brightness + warmth * 0.4
+
+        # Collapse pulse (luminance only)
         if collapsing:
             ci = self._collapse_intensity
-            collapse_b = np.exp(-norm_dist * 4.0) * ci
-            brightness = brightness * (1.0 - ci) + collapse_b * ci
-            hue = hue * (1.0 - ci) + 0.0 * ci   # shift toward red (hue=0)
-            saturation = saturation * (1.0 - ci) + 1.0 * ci
+            pulse = ring * ci * 0.8 + disk_env * ci * 0.3
+            brightness = brightness + pulse
 
-        # ---- 10. Particle overlay -------------------------------------------
-        for p in self._particles:
-            pdx = self._led_x - p.x
-            pdy = self._led_y - p.y
-            pdist = np.hypot(pdx, pdy)
-            particle_b = np.exp(-(pdist ** 2) * 80.0) * (p.life / 20.0)
-            brightness = brightness + particle_b
-            # Blend hue toward particle hue proportional to contribution
-            blend = np.clip(particle_b * 5.0, 0.0, 1.0)
-            hue = hue * (1.0 - blend) + p.hue * blend
+        # Void always swallows — apply last
+        brightness = np.where(void_mask, 0.0, brightness)
 
-        # ---- 11. Global brightness scale ------------------------------------
-        global_brightness = self._brightness_filter.update(frame.rms ** 2)
-        # Keep a baseline so the effect is visible even in silence
-        global_brightness = max(global_brightness, 0.05)
-        brightness = np.clip(brightness * global_brightness, 0.0, 1.0)
+        # Global brightness + silence gate
+        global_b = self._brightness_filter.update(0.30 + frame.rms * 0.75)
+        brightness = np.clip(brightness * global_b * p["brightness_gain"], 0.0, 1.0)
         saturation = np.clip(saturation, 0.0, 1.0)
-        hue = np.clip(hue, 0.0, 1.0)
+        hue = hue % 1.0
 
-        # ---- 12. HSV -> RGB -------------------------------------------------
         result: list[tuple[int, int, int]] = []
-        for i in range(self._num_leds):
-            r_f, g_f, b_f = colorsys.hsv_to_rgb(
+        for i in range(NUM_LEDS):
+            rf, gf, bf = colorsys.hsv_to_rgb(
                 float(hue[i]), float(saturation[i]), float(brightness[i])
             )
-            result.append((int(r_f * 255), int(g_f * 255), int(b_f * 255)))
+            result.append((int(rf * 255), int(gf * 255), int(bf * 255)))
         return result
 
-    # ------------------------------------------------------------------
-    # Private helpers
-    # ------------------------------------------------------------------
-
-    def _spawn_particles(self, sx: float, sy: float, dominant_freq: float) -> None:
-        """Spawn 2-3 particles at the outer edge of the accretion disk."""
-        n = int(self._rng.integers(2, 4))  # 2 or 3
-        for _ in range(n):
-            if len(self._particles) >= _MAX_PARTICLES:
-                break
-            # Random angle, spawn at radius ~0.35 (outer edge of disk)
-            angle = float(self._rng.uniform(0.0, 2 * math.pi))
-            radius = float(self._rng.uniform(0.25, 0.45))
-            px = sx + radius * math.cos(angle)
-            py = sy + radius * math.sin(angle)
-            p_hue = (freq_to_hue(dominant_freq, 80.0, 4000.0) + 0.05) % 1.0
-            life = int(self._rng.integers(15, 25))
-            self._particles.append(_Particle(x=px, y=py, life=life, hue=p_hue))
-
-    def _update_particles(
-        self, sx: float, sy: float, spectral_flux: float
+    def _update_infall_rings(
+        self,
+        frame: AudioFrame,
+        frame_scale: float,
+        ring_radius_eff: float,
+        disk_extent_eff: float,
+        p: dict[str, float],
     ) -> None:
-        """Pull each particle toward (sx, sy) and decrement life."""
-        pull = 0.04
-        turbulence = spectral_flux * 0.03
-        live: list[_Particle] = []
-        for p in self._particles:
-            p.life -= 1
-            if p.life <= 0:
-                continue
-            # Pull toward singularity
-            p.x += (sx - p.x) * pull
-            p.y += (sy - p.y) * pull
-            # Spectral-flux turbulence
-            if turbulence > 0:
-                p.x += float(self._rng.uniform(-turbulence, turbulence))
-                p.y += float(self._rng.uniform(-turbulence, turbulence))
-            live.append(p)
-        self._particles = live
+        # Advect all live rings inward. Bass accelerates infall slightly so loud
+        # passages feel heavier / faster.
+        infall = p["infall_speed"] * (1.0 + float(frame.bass) * 0.8)
+        decay = 0.97 ** frame_scale
+        for rg in self._infall_rings:
+            rg.radius -= infall * frame_scale
+            rg.intensity *= decay
+
+        # Extinguish anything that has crossed the photon ring ("swallowed"),
+        # or has faded below visibility threshold.
+        self._infall_rings = [
+            rg for rg in self._infall_rings
+            if rg.radius > ring_radius_eff - 0.2 and rg.intensity > 0.02
+        ]
+
+        # Spawn new rings on bass beats, and top up on sustained low-end so
+        # steady bass lines still feel warm even without discrete onsets.
+        bass_now = float(frame.bass)
+        gain = p["warmth_gain"]
+        spawn_r = disk_extent_eff * 0.95
+
+        if frame.is_beat and bass_now > 0.15:
+            intensity = min(1.0, (bass_now * 0.8 + float(frame.onset_strength) * 0.3) * gain)
+            self._infall_rings.append(_InfallRing(radius=spawn_r, intensity=intensity))
+        elif bass_now > 0.45 and len(self._infall_rings) < 2:
+            self._infall_rings.append(
+                _InfallRing(radius=spawn_r, intensity=min(1.0, bass_now * 0.5 * gain))
+            )
+
+        if len(self._infall_rings) > _MAX_RINGS:
+            self._infall_rings = self._infall_rings[-_MAX_RINGS:]
