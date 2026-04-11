@@ -5,11 +5,10 @@ __pycache__/
 .pytest_cache/
 .build/
 .scratch/
-.claude/worktrees/
 .worktrees/
 build/
 dist/
 research/
 CLAUDE.md
-.claude/skills/
+.claude/
 .DS_Store
