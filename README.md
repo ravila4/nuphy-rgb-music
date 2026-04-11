@@ -1,16 +1,13 @@
 # NuPhy Music-Reactive RGB
 
-Real-time music-reactive per-key RGB control for NuPhy keyboards. Audio in,
-FFT, beat detection, and visualizer effects rendered at 30fps over USB Raw HID.
-
-Tested on **NuPhy Air75 V2**. Support for other Air models incoming.
+Real-time music-reactive per-key RGB control for NuPhy Air 75 V2 keyboards. Pipes audio stream to FFT for beat and chroma detection. Visualizer effects are rendered at 30fps over USB Raw HID.
 
 ## Requirements
 
 > [!IMPORTANT]
 > The keyboard must be connected via USB. Bluetooth is not supported because Raw HID is a USB-only protocol.
 
-- **macOS 14.2+** (tested on Apple Silicon), or **Linux** (X11/Wayland, experimental)
+- **macOS 14.2+** (tested on Apple Silicon), or **Linux** (tested on Fedora GNOME with Wayland)
 - Python 3.11+
 - Custom QMK firmware with RGB streaming handler (see below)
 
@@ -109,12 +106,9 @@ The app also needs **Input Monitoring** permission for USB HID access to the
 keyboard. Grant it in **System Settings \> Privacy & Security \> Input
 Monitoring**.
 
-No extra audio software needed.
-
 #### Linux
 
-PipeWire and PulseAudio expose monitor sources out of the box. Run `nuphy-rgb --list-audio` to find yours (look for
-"Monitor of ...").
+PipeWire and PulseAudio expose monitor sources out of the box. Run `nuphy-rgb --list-audio` to find yours.
 
 If no monitor source appears, ensure PipeWire or PulseAudio ALSA integration
 is installed (`pipewire-pulse`, `pipewire-alsa`, or equivalent for your distro).
@@ -140,7 +134,7 @@ nuphy-rgb --audio-device 3 --fps 30
 
 The daemon exposes a JSON-RPC 2.0 control socket for runtime control:
 
-```
+```text
 Linux:  $XDG_RUNTIME_DIR/nuphy-rgb/control.sock
 macOS:  $TMPDIR/nuphy-rgb/control.sock
 ```
@@ -181,7 +175,7 @@ to tweak values live. Parameters reset to defaults on restart.
 Connected clients also receive push notifications (`effect_changed`,
 `sidelight_changed`) when the active effect is switched.
 
-## Effects
+## Keyboard Effects
 
 | Effect | Description |
 |--------|-------------|
@@ -243,7 +237,7 @@ class MyEffect:
 
 ### Plugin directory layout
 
-```
+```text
 ~/.config/nuphy-rgb/
   effects/
     my_effect.py          # single-file plugin
