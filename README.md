@@ -181,12 +181,10 @@ Connected clients also receive push notifications (`effect_changed`,
 |--------|-------------|
 | Aurora Borealis | Spectroscopic curtain shimmer driven by audio energy |
 | Chromatic Keys | Each key glows its pitch class color from chroma analysis |
-| Color Wash | Smooth full-keyboard color cycling driven by frequency bands |
 | Event Horizon | Gravitational lensing effect around a central attractor |
 | Interference Pond | Ripple interference patterns from beat-triggered wave sources |
 | Mycelium | Organic growth network that branches on beats |
 | Spectral Waterfall | Scrolling spectrogram — frequency on x-axis, time on y-axis |
-| Standing Waves | Resonant wave patterns driven by bass and mid frequencies |
 | Strange Attractor | Chaotic particle system mapped to the keyboard grid |
 | Blackout | All LEDs off — useful for isolating sidelight effects |
 
