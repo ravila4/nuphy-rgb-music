@@ -10,6 +10,7 @@ import numpy as np
 
 from nuphy_rgb.audio import AudioFrame
 from nuphy_rgb.effects.grid import LED_X, LED_Y, NUM_LEDS
+from nuphy_rgb.visualizer_params import VisualizerParam
 
 _NUM_PARTICLES = 12
 _TRAIL_RADIUS = 0.15
@@ -89,6 +90,25 @@ class StrangeAttractor:
         # Per-particle hue: spread evenly across the color wheel
         self._particle_hues = np.linspace(0.0, 1.0, _NUM_PARTICLES, endpoint=False)
 
+        self.params: dict[str, VisualizerParam] = {
+            "sigma_bass_boost": VisualizerParam(
+                value=8.0, default=8.0, min=0.0, max=20.0,
+                description="Bass → Lorenz σ modulation depth (stretches the butterfly wings)",
+            ),
+            "rho_mids_boost": VisualizerParam(
+                value=16.0, default=16.0, min=0.0, max=30.0,
+                description="Mids → Lorenz ρ modulation depth (drives chaos regime; classic chaos at ρ≈28)",
+            ),
+            "trail_decay": VisualizerParam(
+                value=0.82, default=0.82, min=0.70, max=0.95,
+                description="Base trail decay per frame (higher = longer comet tails)",
+            ),
+            "beat_kick_force": VisualizerParam(
+                value=3.0, default=3.0, min=0.0, max=8.0,
+                description="Beat impulse displacement on particles (0 = no kick, high = chaotic jolts)",
+            ),
+        }
+
     def render(self, frame: AudioFrame) -> list[tuple[int, int, int]]:
         """Render one frame of the Strange Attractor effect.
 
@@ -104,8 +124,8 @@ class StrangeAttractor:
         rms = frame.rms
 
         # --- Lorenz parameter modulation ---
-        sigma = 8.0 + bass * 8.0
-        rho = 20.0 + mids * 16.0
+        sigma = 8.0 + bass * self.params["sigma_bass_boost"].get()
+        rho = 20.0 + mids * self.params["rho_mids_boost"].get()
         beta = 2.0 + highs * 2.0
         dt = 0.003 + highs * 0.003 + frame.spectral_flux * 0.003
 
@@ -115,7 +135,8 @@ class StrangeAttractor:
 
         # --- Beat kick (onset-scaled) ---
         if frame.is_beat:
-            kick = 3.0 + min(frame.onset_strength * 3.0, 3.0)
+            base_kick = self.params["beat_kick_force"].get()
+            kick = base_kick + min(frame.onset_strength * base_kick, base_kick)
             self._particles += self._rng.choice([-kick, kick], size=(1, 3))
             np.clip(self._particles, -100.0, 100.0, out=self._particles)
 
@@ -149,7 +170,7 @@ class StrangeAttractor:
         self._trails = np.maximum(self._trails, max_deposit)
 
         # --- Trail decay ---
-        self._trails *= 0.82 + rms * 0.12
+        self._trails *= self.params["trail_decay"].get() + rms * 0.12
 
         # --- Render to RGB ---
         colors: list[tuple[int, int, int]] = []
