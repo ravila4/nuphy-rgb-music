@@ -14,7 +14,13 @@ import numpy as np
 import pytest
 
 from nuphy_rgb.audio import SAMPLE_RATE
-from nuphy_rgb.diagnostics import _common, contact_sheet, kymograph, timeseries
+from nuphy_rgb.diagnostics import (
+    _common,
+    contact_sheet,
+    kymograph,
+    timeseries,
+    web_export,
+)
 from nuphy_rgb.effects import InterferencePond
 
 
@@ -94,3 +100,19 @@ def test_timeseries_renders(frames, tmp_path: Path):
     )
     assert out.exists()
     assert out.stat().st_size > 1000
+
+
+def test_web_export_svg_has_all_leds():
+    svg = web_export.build_keyboard_svg()
+    assert svg.startswith("<svg")
+    assert 'viewBox="0 0 16.0 6.0"' in svg
+    for i in range(84):
+        assert f'id="led-{i}"' in svg
+
+
+def test_web_export_frames_array_shape(frames):
+    arr = web_export.render_frames_array(InterferencePond(), frames)
+    assert arr.shape == (len(frames), 84, 3)
+    assert arr.dtype == np.uint8
+    # Non-silent input → at least one lit LED somewhere in the run.
+    assert arr.max() > 0
