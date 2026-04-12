@@ -57,7 +57,14 @@ class TestToDict:
             "min": 0.0,
             "max": 1.0,
             "description": "test param",
+            "order": 0,
         }
+
+    def test_to_dict_includes_order(self):
+        p = VisualizerParam(
+            value=0.5, default=0.5, min=0.0, max=1.0, order=5,
+        )
+        assert p.to_dict()["order"] == 5
 
     def test_to_dict_reflects_mutations(self):
         p = VisualizerParam(value=0.5, default=0.5, min=0.0, max=1.0)

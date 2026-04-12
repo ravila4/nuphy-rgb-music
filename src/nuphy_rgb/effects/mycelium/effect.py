@@ -54,6 +54,10 @@ class Mycelium:
     """
 
     name = "Mycelium"
+    description = (
+        "Beats spawn bioluminescent tendrils that grow outward through "
+        "neighboring keys. Color tracks the dominant frequency band."
+    )
 
     def __init__(
         self,

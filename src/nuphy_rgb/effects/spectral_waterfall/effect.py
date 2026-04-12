@@ -17,6 +17,10 @@ class SpectralWaterfall:
     """Scrolling spectrogram — frequency on x-axis, time on y-axis."""
 
     name = "Spectral Waterfall"
+    description = (
+        "Scrolling spectrogram: frequency along the row, time down the "
+        "columns. Bass on the left, treble on the right."
+    )
 
     def __init__(self) -> None:
         # Grid stores per-bin normalized values per cell [0, 1]

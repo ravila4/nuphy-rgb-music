@@ -93,6 +93,24 @@ class TestListEffects:
         assert resp["result"]["effects"] == ["Alpha", "Beta", "Gamma"]
         assert resp["result"]["sidelights"] == ["Pulse", "Wave"]
 
+    def test_descriptions_empty_without_visualizers(self, server) -> None:
+        srv, sock_path = server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "list_effects", "id": 1,
+        })
+        assert resp["result"]["effect_descriptions"] == {}
+
+    def test_descriptions_from_visualizer_attribute(
+        self, param_server,
+    ) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "list_effects", "id": 1,
+        })
+        # _FakeWithParams / _FakeNoParams don't declare description → "".
+        descs = resp["result"]["effect_descriptions"]
+        assert descs == {"Fancy": "", "Plain": ""}
+
 
 class TestSetEffect:
     def test_set_by_name(self, server, state) -> None:
@@ -419,6 +437,173 @@ class TestSetParam:
         })
         assert "error" in resp
         assert "missing required param" in resp["error"]["message"]
+
+
+class TestGetParamsFor:
+    def test_returns_params_for_named_effect(self, param_server) -> None:
+        srv, sock_path = param_server
+        # Active effect is Fancy; query Plain (inactive, no params)
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_params_for",
+            "params": {"name": "Plain"}, "id": 1,
+        })
+        assert resp["result"] == {}
+
+    def test_returns_params_for_inactive_effect(
+        self, param_server, param_state,
+    ) -> None:
+        srv, sock_path = param_server
+        param_state.key.set(1)  # active = Plain
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_params_for",
+            "params": {"name": "Fancy"}, "id": 1,
+        })
+        assert "speed" in resp["result"]
+        assert resp["result"]["speed"]["value"] == 0.5
+
+    def test_unknown_effect_returns_empty(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_params_for",
+            "params": {"name": "Nope"}, "id": 1,
+        })
+        assert resp["result"] == {}
+
+
+class TestSetParamFor:
+    def test_sets_param_on_inactive_effect(
+        self, param_server, param_state,
+    ) -> None:
+        srv, sock_path = param_server
+        param_state.key.set(1)  # active = Plain; tune Fancy
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param_for",
+            "params": {"name": "Fancy", "param": "speed", "value": 0.9},
+            "id": 1,
+        })
+        assert resp["result"]["value"] == 0.9
+        # Verify via get_params_for
+        resp2 = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_params_for",
+            "params": {"name": "Fancy"}, "id": 2,
+        })
+        assert resp2["result"]["speed"]["value"] == 0.9
+
+    def test_unknown_effect_errors(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param_for",
+            "params": {"name": "Nope", "param": "speed", "value": 0.5},
+            "id": 1,
+        })
+        assert "error" in resp
+        assert "unknown effect" in resp["error"]["message"]
+
+    def test_unknown_param_errors(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param_for",
+            "params": {"name": "Fancy", "param": "nope", "value": 0.5},
+            "id": 1,
+        })
+        assert "error" in resp
+        assert "unknown param" in resp["error"]["message"]
+
+    def test_out_of_range_errors(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param_for",
+            "params": {"name": "Fancy", "param": "speed", "value": 5.0},
+            "id": 1,
+        })
+        assert "error" in resp
+        assert "out of range" in resp["error"]["message"]
+
+
+class TestResetParamsFor:
+    def test_resets_inactive_effect(self, param_server, param_state) -> None:
+        srv, sock_path = param_server
+        _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param_for",
+            "params": {"name": "Fancy", "param": "speed", "value": 0.9},
+            "id": 1,
+        })
+        param_state.key.set(1)  # active = Plain
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "reset_params_for",
+            "params": {"name": "Fancy"}, "id": 2,
+        })
+        assert "error" not in resp
+        resp2 = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_params_for",
+            "params": {"name": "Fancy"}, "id": 3,
+        })
+        assert resp2["result"]["speed"]["value"] == 0.5
+
+    def test_unknown_effect_errors(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "reset_params_for",
+            "params": {"name": "Nope"}, "id": 1,
+        })
+        assert "error" in resp
+        assert "unknown effect" in resp["error"]["message"]
+
+
+class TestResetParams:
+    def test_resets_all_params_to_defaults(self, param_server) -> None:
+        srv, sock_path = param_server
+        _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_param",
+            "params": {"name": "speed", "value": 0.9}, "id": 1,
+        })
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "reset_params", "id": 2,
+        })
+        assert "error" not in resp
+        get_resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "get_params", "id": 3,
+        })
+        assert get_resp["result"]["speed"]["value"] == 0.5
+
+    def test_no_params_is_not_an_error(self, param_server, param_state) -> None:
+        srv, sock_path = param_server
+        param_state.key.set(1)  # switch to Plain (no params)
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "reset_params", "id": 1,
+        })
+        assert "error" not in resp
+
+
+class TestSetEffectAndGetParams:
+    def test_switches_and_returns_params(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_effect_and_get_params",
+            "params": {"name": "Fancy"}, "id": 1,
+        })
+        result = resp["result"]
+        assert result["name"] == "Fancy"
+        assert "speed" in result["params"]
+        assert result["params"]["speed"]["value"] == 0.5
+
+    def test_switches_to_effect_without_params(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_effect_and_get_params",
+            "params": {"name": "Plain"}, "id": 1,
+        })
+        assert resp["result"]["name"] == "Plain"
+        assert resp["result"]["params"] == {}
+
+    def test_unknown_effect_returns_error(self, param_server) -> None:
+        srv, sock_path = param_server
+        resp = _send(sock_path, {
+            "jsonrpc": "2.0", "method": "set_effect_and_get_params",
+            "params": {"name": "Nope"}, "id": 1,
+        })
+        assert "error" in resp
+        assert "unknown effect" in resp["error"]["message"]
 
 
 class TestSetPaused:

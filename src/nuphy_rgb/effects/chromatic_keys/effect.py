@@ -17,6 +17,10 @@ class ChromaticKeys:
     """Bar-graph EQ for musical pitch classes."""
 
     name = "Chromatic Keys"
+    description = (
+        "Twelve pitch classes from C to B mapped to columns. Bar height "
+        "tracks energy per note; hue is fixed by pitch class."
+    )
 
     def __init__(self) -> None:
         # Column → pitch class mapping: 12 notes spread across 16 columns

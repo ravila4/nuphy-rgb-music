@@ -132,6 +132,40 @@ final class DaemonClient {
         _ = try await sendRequest(method: "quit")
     }
 
+    // MARK: - Param RPCs
+
+    func getParamsFor(effect: String) async throws -> [ParamSchema] {
+        let data = try await sendRequest(
+            method: "get_params_for",
+            params: ["name": effect],
+        )
+        return try ParamMapDecoder.decode(data)
+    }
+
+    func setParamFor(effect: String, name: String, value: Double) async throws {
+        _ = try await sendRequest(
+            method: "set_param_for",
+            params: ["name": effect, "param": name, "value": value],
+        )
+    }
+
+    func resetParamsFor(effect: String) async throws {
+        _ = try await sendRequest(
+            method: "reset_params_for",
+            params: ["name": effect],
+        )
+    }
+
+    func setEffectAndGetParams(
+        name: String,
+    ) async throws -> SetEffectAndGetParamsResult {
+        let data = try await sendRequest(
+            method: "set_effect_and_get_params",
+            params: ["name": name],
+        )
+        return try SetEffectAndGetParamsResult.decode(data)
+    }
+
     // MARK: - Socket path
 
     nonisolated static func defaultSocketPath() -> String {
