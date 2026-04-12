@@ -79,7 +79,7 @@ final class DaemonClient {
 
         writeHandle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
         isConnected = true
-        log.warning("connected to \(path)")
+        log.info("connected to \(path)")
         startReadLoop(readFd: readFd)
         delegate?.daemonClientDidConnect(self)
     }
@@ -216,7 +216,7 @@ final class DaemonClient {
 
         let request = JSONRPCRequest(method: method, params: params, id: id)
         let data = try request.toData()
-        log.warning("sendRequest: \(method, privacy: .public) id=\(id) payload=\(String(data: data, encoding: .utf8) ?? "nil", privacy: .public)")
+        log.debug("sendRequest: \(method, privacy: .public) id=\(id) payload=\(String(data: data, encoding: .utf8) ?? "nil", privacy: .public)")
         let payload = data + Data([0x0A])  // newline-delimited JSON
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -239,7 +239,7 @@ final class DaemonClient {
         let readHandle = FileHandle(fileDescriptor: readFd, closeOnDealloc: true)
 
         readTask = Task.detached { [weak self] in
-            log.warning("read loop started on fd=\(readFd)")
+            log.info("read loop started on fd=\(readFd)")
             var buffer = Data()
 
             while !Task.isCancelled {
@@ -257,7 +257,7 @@ final class DaemonClient {
                 }
             }
 
-            log.warning("read loop ended")
+            log.info("read loop ended")
 
             if let self = self {
                 await self.handleReadLoopEnded()
@@ -267,7 +267,7 @@ final class DaemonClient {
 
     @MainActor
     private func handleMessage(_ message: JSONRPCMessage) {
-        log.warning("handleMessage: \(String(describing: message), privacy: .public)")
+        log.debug("handleMessage: \(String(describing: message), privacy: .public)")
         switch message {
         case .response(let id, let resultData):
             guard let completion = pending.removeValue(forKey: id) else { return }
