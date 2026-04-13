@@ -73,8 +73,10 @@ class TestToDict:
 
 
 class TestThreadSafety:
+    """CPython-only: relies on GIL atomicity for single float writes."""
+
     def test_concurrent_set_and_get(self):
-        """Verify no exceptions under concurrent access."""
+        """Smoke test — no exceptions under concurrent access."""
         p = VisualizerParam(value=0.5, default=0.5, min=0.0, max=1.0)
         errors: list[Exception] = []
 

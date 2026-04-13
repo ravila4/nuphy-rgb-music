@@ -10,17 +10,7 @@ from nuphy_rgb.visualizer_params import VisualizerParam
 
 
 class CyclicIndex:
-    """Thread-safe cyclic index with an optional named-item registry.
-
-    Tracks a current position within a fixed-size range [0, count) and
-    exposes next/prev/set navigation. A changed flag is set on each mutation
-    and consumed by poll_changed().
-
-    Args:
-        count: Number of positions in the cycle.
-        names: Optional list of names for set_by_name() lookups. Must have
-            exactly ``count`` entries if provided.
-    """
+    """Thread-safe cyclic index with an optional named-item registry."""
 
     def __init__(self, count: int, names: Sequence[str] | None = None) -> None:
         if count <= 0:
@@ -63,15 +53,6 @@ class CyclicIndex:
             self._changed = True
 
     def set(self, index: int) -> None:
-        """Jump directly to a position.
-
-        Args:
-            index: Target index in [0, count).
-
-        Raises:
-            ValueError: If index is out of range.
-        """
-        # _count is immutable post-init, safe to read without lock.
         if index < 0 or index >= self._count:
             raise ValueError(f"index {index} out of range [0, {self._count})")
         with self._lock:
@@ -79,17 +60,7 @@ class CyclicIndex:
             self._changed = True
 
     def set_by_name(self, name: str) -> bool:
-        """Jump to the position whose name matches (case-insensitive).
-
-        Args:
-            name: Name to search for.
-
-        Returns:
-            True if found and index was updated; False if not found.
-
-        Raises:
-            ValueError: If this instance was created without names.
-        """
+        """Jump to the position whose name matches (case-insensitive)."""
         if self._names is None:
             raise ValueError(
                 "CyclicIndex was created without names; cannot use set_by_name()"
@@ -104,10 +75,7 @@ class CyclicIndex:
         return False
 
     def poll_changed(self) -> int | None:
-        """Return current index if changed since last poll, else None.
-
-        Resets the changed flag.
-        """
+        """Return current index if changed since last poll, else None. Resets the flag."""
         with self._lock:
             if self._changed:
                 self._changed = False
@@ -116,14 +84,7 @@ class CyclicIndex:
 
 
 class DaemonState:
-    """Thread-safe state shared between the main loop and IPC server.
-
-    Args:
-        num_effects: Number of keyboard visualizer effects.
-        effect_names: Names of the keyboard effects for set_by_name() support.
-        num_sidelights: Number of sidelight effects (0 = sidelights disabled).
-        sidelight_names: Names of sidelight effects for set_by_name() support.
-    """
+    """Thread-safe state shared between the main loop and IPC server."""
 
     def __init__(
         self,
@@ -204,31 +165,20 @@ class DaemonState:
     def get_params_by_name(
         self, effect_name: str,
     ) -> dict[str, VisualizerParam]:
-        """Return the params dict for the named effect, or ``{}``.
-
-        Unknown effect or effect without params both yield an empty dict.
-        """
+        """Return the params dict for the named effect, or ``{}``."""
         return self._get_params(self._find_effect(effect_name))
 
     def set_param_by_name(
         self, effect_name: str, param: str, value: float,
     ) -> VisualizerParam:
-        """Set a param on the named effect.
-
-        Raises ``ValueError`` if the effect is unknown or the param does
-        not exist on that effect.
-        """
+        """Set a param on the named effect."""
         effect = self._find_effect(effect_name)
         if effect is None:
             raise ValueError(f"unknown effect: {effect_name}")
         return self._set_param(effect, param, value)
 
     def get_effect_descriptions(self) -> dict[str, str]:
-        """Return ``{effect_name: description}`` for all keyboard effects.
-
-        Effects that don't declare a ``description`` attribute map to an
-        empty string.
-        """
+        """Return ``{effect_name: description}`` for all keyboard effects."""
         result: dict[str, str] = {}
         for viz in self._visualizers:
             name = getattr(viz, "name", None)
@@ -238,11 +188,7 @@ class DaemonState:
         return result
 
     def reset_params_by_name(self, effect_name: str) -> None:
-        """Reset all params on the named effect to their defaults.
-
-        Raises ``ValueError`` if the effect is unknown. No-op if the
-        effect has no params.
-        """
+        """Reset all params on the named effect to their defaults."""
         effect = self._find_effect(effect_name)
         if effect is None:
             raise ValueError(f"unknown effect: {effect_name}")
