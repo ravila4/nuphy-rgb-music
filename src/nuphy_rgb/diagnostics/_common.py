@@ -31,12 +31,15 @@ from nuphy_rgb.effects.grid import LED_ROW_COL, MAX_COLS, NUM_LEDS, NUM_ROWS
 # Staple benchmark
 # ---------------------------------------------------------------------------
 
-STAPLE_SONG = (
+STAPLE_SONG: Path | None = None
+_staple_candidate = (
     Path.home()
     / "Library/CloudStorage/Dropbox/Music/deemix/David Bowie"
     / "David Bowie (aka Space Oddity) (2015 Remaster)"
     / " 01 Space Oddity (2015 Remaster).mp3"
 )
+if _staple_candidate.exists():
+    STAPLE_SONG = _staple_candidate
 STAPLE_START = 0.0
 STAPLE_DURATION = 60.0
 
@@ -270,9 +273,11 @@ def render_effect_at_samples(
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     """Attach the --song / --start / --duration / --out-dir flags used by
     every diagnostic CLI."""
+    required = STAPLE_SONG is None
     parser.add_argument(
         "--song", type=Path, default=STAPLE_SONG,
-        help="Audio file (default: Space Oddity staple)",
+        required=required,
+        help="Audio file" + ("" if required else " (default: Space Oddity staple)"),
     )
     parser.add_argument(
         "--start", type=float, default=STAPLE_START,

@@ -47,12 +47,7 @@ log = logging.getLogger(__name__)
 def _open_keyboards(
     infos: list[KeyboardInfo],
 ) -> tuple[list[tuple[KeyboardInfo, hid.device, int]], bool]:
-    """Open HID devices and probe each.
-
-    Returns ``(opened, permission_denied)`` where *opened* is a list of
-    ``(info, device, led_count)`` triples and *permission_denied* is True
-    if any device failed to open due to OS permissions.
-    """
+    """Open HID devices and probe each."""
     opened: list[tuple[KeyboardInfo, hid.device, int]] = []
     permission_denied = False
     for info in infos:

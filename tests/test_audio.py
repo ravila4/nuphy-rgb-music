@@ -8,6 +8,7 @@ from nuphy_rgb.audio import (
     BeatDetector,
     ExpFilter,
     build_chroma_filterbank,
+    build_spectrum_bin_edges,
     compute_band_energies,
     compute_chroma,
     compute_dominant_freq,
@@ -281,6 +282,13 @@ class TestComputeSpectrumBins:
             bins = compute_spectrum_bins(mags, freqs, num_bins=n)
             assert len(bins) == n
 
+    def test_precomputed_bin_indices_match(self):
+        mags, freqs = _make_sine_fft(440.0)
+        baseline = compute_spectrum_bins(mags, freqs, num_bins=16)
+        bin_idx, _ = build_spectrum_bin_edges(freqs, num_bins=16)
+        fast = compute_spectrum_bins(mags, freqs, num_bins=16, bin_indices=bin_idx)
+        assert baseline == fast
+
 
 class TestAudioFrame:
     def test_is_frozen(self):
@@ -292,6 +300,78 @@ class TestAudioFrame:
         )
         with pytest.raises(AttributeError):
             frame.bass = 0.9
+
+
+class TestPeakDecayInSilence:
+    """AGC peak trackers must decay to near-zero during sustained silence."""
+
+    def test_peak_energy_decays_in_silence(self):
+        cap = AudioCapture(device_index=0, sample_rate=SAMPLE_RATE)
+        t = np.arange(1024) / SAMPLE_RATE
+        loud = (0.8 * np.sin(2 * np.pi * 100.0 * t)).astype(np.float32)
+        silence = np.zeros(1024, dtype=np.float32)
+
+        # Pump loud frames to raise peak
+        for _ in range(20):
+            cap._queue.put_nowait(loud)
+            cap.process_latest()
+        peak_after_loud = cap._peak_energy
+        assert peak_after_loud > 0.0
+
+        # Pump silence frames — peak should decay substantially
+        for _ in range(60):
+            cap._queue.put_nowait(silence)
+            cap.process_latest()
+
+        assert cap._peak_energy < peak_after_loud * 0.1, (
+            f"Peak energy should decay in silence: was {peak_after_loud}, "
+            f"now {cap._peak_energy}"
+        )
+
+    def test_peak_rms_decays_in_silence(self):
+        cap = AudioCapture(device_index=0, sample_rate=SAMPLE_RATE)
+        t = np.arange(1024) / SAMPLE_RATE
+        loud = (0.8 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+        silence = np.zeros(1024, dtype=np.float32)
+
+        for _ in range(20):
+            cap._queue.put_nowait(loud)
+            cap.process_latest()
+        peak_after_loud = cap._peak_rms
+
+        for _ in range(60):
+            cap._queue.put_nowait(silence)
+            cap.process_latest()
+
+        assert cap._peak_rms < peak_after_loud * 0.1
+
+    def test_cold_start_does_not_pin_peaks(self):
+        """First frame of audio shouldn't permanently inflate peak trackers."""
+        cap = AudioCapture(device_index=0, sample_rate=SAMPLE_RATE)
+        t = np.arange(1024) / SAMPLE_RATE
+        # One very loud frame followed by quiet music
+        blast = (1.0 * np.sin(2 * np.pi * 100.0 * t)).astype(np.float32)
+        quiet = (0.05 * np.sin(2 * np.pi * 100.0 * t)).astype(np.float32)
+
+        cap._queue.put_nowait(blast)
+        cap.process_latest()
+        peak_after_blast = cap._peak_energy
+
+        # Feed quiet music for a while
+        for _ in range(100):
+            cap._queue.put_nowait(quiet)
+            cap.process_latest()
+
+        # Peak should have adapted down substantially from blast level
+        assert cap._peak_energy < peak_after_blast * 0.1, (
+            f"Peak should adapt down from blast: was {peak_after_blast}, "
+            f"now {cap._peak_energy}"
+        )
+        # Normalized bass should be responding, not crushed
+        cap._queue.put_nowait(quiet)
+        frame = cap.process_latest()
+        assert frame is not None
+        assert frame.bass > 0.01, "Bass should not be crushed after peak adapts"
 
 
 class TestAudioCapture:

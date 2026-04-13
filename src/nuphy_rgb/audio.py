@@ -13,9 +13,13 @@ BASS_LOW, BASS_HIGH = 20, 150
 MID_LOW, MID_HIGH = 150, 2000
 HIGH_LOW, HIGH_HIGH = 2000, 16000
 
-
 NUM_SPECTRUM_BINS = 16
 NUM_CHROMA_BINS = 12
+
+# AGC peak tracker constants
+PEAK_DECAY = 0.995          # normal decay per frame (~600 frames to halve)
+PEAK_SILENCE_DECAY = 0.92   # fast decay during silence (~8 frames to halve)
+SILENCE_FLOOR = 1e-4         # below this, signal is considered silence
 
 
 @dataclass(frozen=True)
@@ -39,11 +43,7 @@ class AudioFrame:
 
 
 class ExpFilter:
-    """Asymmetric exponential smoothing filter.
-
-    Fast attack (alpha_rise) for responsive transients,
-    slow decay (alpha_decay) for smooth falloff.
-    """
+    """Asymmetric exponential smoothing: fast attack, slow decay."""
 
     def __init__(self, alpha_rise: float = 0.8, alpha_decay: float = 0.15):
         self.alpha_rise = alpha_rise
@@ -59,10 +59,7 @@ class ExpFilter:
 def compute_band_energies(
     magnitudes: np.ndarray, freqs: np.ndarray
 ) -> tuple[float, float, float]:
-    """Compute energy in bass, mid, and high frequency bands.
-
-    Returns (bass, mids, highs) as raw energy values (sum of squared magnitudes).
-    """
+    """Compute energy in bass, mid, and high frequency bands."""
     bass_mask = (freqs >= BASS_LOW) & (freqs <= BASS_HIGH)
     mid_mask = (freqs >= MID_LOW) & (freqs <= MID_HIGH)
     high_mask = (freqs >= HIGH_LOW) & (freqs <= HIGH_HIGH)
@@ -74,10 +71,7 @@ def compute_band_energies(
 
 
 def compute_dominant_freq(magnitudes: np.ndarray, freqs: np.ndarray) -> float:
-    """Return the frequency (Hz) with the highest magnitude.
-
-    Returns 0.0 for near-silence (avoids noise-floor flicker).
-    """
+    """Return the frequency (Hz) with the highest magnitude, or 0.0 for near-silence."""
     if np.max(magnitudes) < 1e-6:
         return 0.0
     return float(freqs[np.argmax(magnitudes)])
@@ -86,13 +80,29 @@ def compute_dominant_freq(magnitudes: np.ndarray, freqs: np.ndarray) -> float:
 def compute_spectral_flux(
     magnitudes: np.ndarray, prev_magnitudes: np.ndarray
 ) -> float:
-    """Half-wave rectified spectral flux: sum of positive magnitude changes.
-
-    Only increases count — decreasing bins are ignored. This captures
-    the onset of new spectral energy (new notes, percussive hits).
-    """
+    """Half-wave rectified spectral flux: sum of positive magnitude changes."""
     diff = magnitudes - prev_magnitudes
     return float(np.sum(np.maximum(diff, 0.0)))
+
+
+def build_spectrum_bin_edges(
+    freqs: np.ndarray,
+    num_bins: int = NUM_SPECTRUM_BINS,
+    min_freq: float = 20.0,
+    max_freq: float = 16000.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pre-compute bin assignments for log-spaced spectrum bins.
+
+    Returns (bin_indices, log_edges) where bin_indices maps each freq bin
+    to a spectrum bin (0..num_bins-1), with out-of-range bins set to -1.
+    """
+    log_edges = np.logspace(
+        np.log10(min_freq), np.log10(max_freq), num_bins + 1
+    )
+    # digitize returns 1..num_bins for in-range, 0 or num_bins+1 for out
+    raw = np.digitize(freqs, log_edges)
+    bin_indices = np.where((raw >= 1) & (raw <= num_bins), raw - 1, -1)
+    return bin_indices.astype(np.intp), log_edges
 
 
 def compute_spectrum_bins(
@@ -101,24 +111,23 @@ def compute_spectrum_bins(
     num_bins: int = NUM_SPECTRUM_BINS,
     min_freq: float = 20.0,
     max_freq: float = 16000.0,
+    bin_indices: np.ndarray | None = None,
 ) -> list[float]:
     """Bin FFT magnitudes into log-spaced frequency bands.
 
-    Returns a list of `num_bins` floats — mean squared magnitude per band.
-    Frequencies outside [min_freq, max_freq] are excluded.
+    Pass pre-computed *bin_indices* from build_spectrum_bin_edges() to
+    avoid recomputing bin assignments each frame.
     """
-    log_edges = np.logspace(
-        np.log10(min_freq), np.log10(max_freq), num_bins + 1
-    )
-    result: list[float] = []
-    for i in range(num_bins):
-        mask = (freqs >= log_edges[i]) & (freqs < log_edges[i + 1])
-        if np.any(mask):
-            result.append(float(np.mean(magnitudes[mask] ** 2)))
-        else:
-            result.append(0.0)
-    return result
-
+    if bin_indices is None:
+        bin_indices, _ = build_spectrum_bin_edges(
+            freqs, num_bins, min_freq, max_freq
+        )
+    power = magnitudes ** 2
+    valid = bin_indices >= 0
+    counts = np.bincount(bin_indices[valid], minlength=num_bins)
+    sums = np.bincount(bin_indices[valid], weights=power[valid], minlength=num_bins)
+    safe_counts = np.where(counts > 0, counts, 1)
+    return np.where(counts > 0, sums / safe_counts, 0.0).tolist()
 
 
 def build_chroma_filterbank(
@@ -223,11 +232,7 @@ FFT_SIZE = 2048
 
 
 class AudioCapture:
-    """Captures audio from a sounddevice input and produces AudioFrames.
-
-    The PortAudio callback only copies buffers into a queue (no FFT, no allocation).
-    Call process_latest() from the main loop to do all DSP work.
-    """
+    """Captures audio from a sounddevice input and produces AudioFrames."""
 
     def __init__(
         self,
@@ -261,12 +266,22 @@ class AudioCapture:
         self._peak_energy: float = 0.0
         self._rms_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
         self._peak_rms: float = 0.0
+        self._spectrum_bin_indices, _ = build_spectrum_bin_edges(self._freqs)
         self._chroma_filterbank = build_chroma_filterbank(self._freqs)
         self._peak_chroma: float = 0.0
         self._chroma_filters = [
             ExpFilter(alpha_rise=0.6, alpha_decay=0.1) for _ in range(NUM_CHROMA_BINS)
         ]
         self._stream: sd.InputStream | None = None
+
+    @staticmethod
+    def _update_peak(current_peak: float, raw_value: float) -> float:
+        """Decay a peak tracker, with fast decay when signal is well below peak."""
+        if raw_value < SILENCE_FLOOR or raw_value < current_peak * 0.05:
+            decay = PEAK_SILENCE_DECAY
+        else:
+            decay = PEAK_DECAY
+        return max(raw_value, current_peak * decay)
 
     def _callback(
         self, indata: np.ndarray, frames: int, time_info: object, status: object
@@ -327,7 +342,7 @@ class AudioCapture:
 
         # Running-peak AGC normalization
         max_energy = max(raw_bass, raw_mids, raw_highs)
-        self._peak_energy = max(max_energy, self._peak_energy * 0.995)
+        self._peak_energy = self._update_peak(self._peak_energy, max_energy)
         scale = 1.0 / (self._peak_energy + 1e-10)
 
         bass = self._bass_filter.update(raw_bass * scale)
@@ -336,7 +351,7 @@ class AudioCapture:
 
         dominant_freq = compute_dominant_freq(magnitudes, self._freqs)
         raw_rms = float(np.sqrt(np.mean(chunk**2)))
-        self._peak_rms = max(raw_rms, self._peak_rms * 0.995)
+        self._peak_rms = self._update_peak(self._peak_rms, raw_rms)
         rms = self._rms_filter.update(raw_rms / (self._peak_rms + 1e-10))
         is_beat = self._beat_detector.update(raw_bass)
         mid_beat = self._mid_beat_detector.update(raw_mids)
@@ -345,7 +360,7 @@ class AudioCapture:
         # Spectral flux (AGC-normalized like band energies)
         if self._prev_magnitudes is not None:
             raw_flux = compute_spectral_flux(magnitudes, self._prev_magnitudes)
-            self._peak_flux = max(raw_flux, self._peak_flux * 0.995)
+            self._peak_flux = self._update_peak(self._peak_flux, raw_flux)
             spectral_flux = raw_flux / (self._peak_flux + 1e-10)
         else:
             spectral_flux = 0.0
@@ -358,18 +373,20 @@ class AudioCapture:
             self._peak_onset = raw_onset
             onset_strength = 0.0
         else:
-            self._peak_onset = max(raw_onset, self._peak_onset * 0.995)
+            self._peak_onset = self._update_peak(self._peak_onset, raw_onset)
             onset_strength = raw_onset / (self._peak_onset + 1e-10)
         self._prev_rms = raw_rms
 
         # Spectrum bins (same AGC scale as band energies)
-        raw_bins = compute_spectrum_bins(magnitudes, self._freqs)
+        raw_bins = compute_spectrum_bins(
+            magnitudes, self._freqs, bin_indices=self._spectrum_bin_indices,
+        )
         spectrum = tuple(b * scale for b in raw_bins)
 
         # Chroma (AGC + ExpFilter smoothing, like band energies)
         raw_chroma = compute_chroma(magnitudes, self._chroma_filterbank)
         max_chroma = max(raw_chroma)
-        self._peak_chroma = max(max_chroma, self._peak_chroma * 0.995)
+        self._peak_chroma = self._update_peak(self._peak_chroma, max_chroma)
         chroma_scale = 1.0 / (self._peak_chroma + 1e-10)
         chroma = tuple(
             self._chroma_filters[i].update(raw_chroma[i] * chroma_scale)
