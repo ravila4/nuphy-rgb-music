@@ -1,6 +1,6 @@
 # NuPhy Music-Reactive RGB
 
-Real-time music-reactive per-key RGB control for NuPhy Air 75 V2 keyboards. Pipes audio stream to FFT for beat and chroma detection. Visualizer effects are rendered at 30fps over USB Raw HID.
+Real-time music-reactive per-key RGB control for NuPhy Air 75 V2 keyboards. Computes FFT from audio stream for beat and chroma detection, and renders visualizer effects at 30fps over USB Raw HID.
 
 ## Requirements
 
@@ -153,20 +153,20 @@ echo '{"jsonrpc":"2.0","method":"quit","id":1}' | nc -U $XDG_RUNTIME_DIR/nuphy-r
 
 | Method | Params | Description |
 |--------|--------|-------------|
-| `get_status` | — | Current effect, sidelight, running state |
-| `list_effects` | — | All available effect and sidelight names |
+| `get_status` | - | Current effect, sidelight, running state |
+| `list_effects` | - | All available effect and sidelight names |
 | `set_effect` | `{"name": "..."}` | Switch keyboard effect |
 | `set_sidelight` | `{"name": "..."}` | Switch sidelight effect |
-| `next_effect` | — | Cycle to next keyboard effect |
-| `prev_effect` | — | Cycle to previous keyboard effect |
-| `next_sidelight` | — | Cycle to next sidelight effect |
-| `prev_sidelight` | — | Cycle to previous sidelight effect |
-| `get_params` | — | Tunable parameters for the active keyboard effect |
+| `next_effect` | - | Cycle to next keyboard effect |
+| `prev_effect` | - | Cycle to previous keyboard effect |
+| `next_sidelight` | - | Cycle to next sidelight effect |
+| `prev_sidelight` | - | Cycle to previous sidelight effect |
+| `get_params` | - | Tunable parameters for the active keyboard effect |
 | `set_param` | `{"name": "...", "value": N}` | Set a parameter on the active keyboard effect |
-| `get_side_params` | — | Tunable parameters for the active sidelight effect |
+| `get_side_params` | - | Tunable parameters for the active sidelight effect |
 | `set_side_param` | `{"name": "...", "value": N}` | Set a parameter on the active sidelight effect |
 | `set_paused` | `{"paused": true}` | Pause/resume rendering |
-| `quit` | — | Stop the daemon |
+| `quit` | - | Stop the daemon |
 
 Effects can expose tunable parameters (decay rates, brightness, etc.) with
 min/max ranges. Use `get_params` to discover what's available, then `set_param`
@@ -184,9 +184,9 @@ Connected clients also receive push notifications (`effect_changed`,
 | Event Horizon | Gravitational lensing effect around a central attractor |
 | Interference Pond | Ripple interference patterns from beat-triggered wave sources |
 | Mycelium | Organic growth network that branches on beats |
-| Spectral Waterfall | Scrolling spectrogram — frequency on x-axis, time on y-axis |
+| Spectral Waterfall | Scrolling spectrogram -- frequency on x-axis, time on y-axis |
 | Strange Attractor | Chaotic particle system mapped to the keyboard grid |
-| Blackout | All LEDs off — useful for isolating sidelight effects |
+| Blackout | All LEDs off (useful for isolating sidelight effects) |
 
 ## Sidelights
 
@@ -196,8 +196,8 @@ handle them instead.
 
 | Effect | Description |
 |--------|-------------|
-| VU Meter | Symmetric bass-driven bar graph — green, yellow, red |
-| Chroma Bars | Each LED tracks a pitch class — left strip C-F, right strip F#-B |
+| VU Meter | Symmetric bass-driven bar graph |
+| Chroma Bars | Each LED tracks a pitch class: left strip C-F, right strip F#-B |
 | Chord Glow | Both strips glow the blended color of the current chord |
 
 ## Plugins
@@ -255,7 +255,7 @@ class MyEffect:
 
 ## Reference Repos
 
-- [ryodeushii/qmk-firmware](https://github.com/ryodeushii/qmk-firmware) — most maintained NuPhy QMK fork (base for our firmware)
-- [zhouzengming/Nuphy-qmk-SignalRGB](https://github.com/zhouzengming/Nuphy-qmk-SignalRGB) — SignalRGB host RGB control (protocol reference)
-- [Drugantibus/qmk-hid-rgb](https://github.com/Drugantibus/qmk-hid-rgb) — Python Raw HID RGB control for QMK
-- [zhogov/nuphy-state-of-qmk-firmware](https://github.com/zhogov/nuphy-state-of-qmk-firmware) — tracks all NuPhy QMK fork status
+- [ryodeushii/qmk-firmware](https://github.com/ryodeushii/qmk-firmware) -- most maintained NuPhy QMK fork (base for our firmware)
+- [zhouzengming/Nuphy-qmk-SignalRGB](https://github.com/zhouzengming/Nuphy-qmk-SignalRGB) -- SignalRGB host RGB control (protocol reference)
+- [Drugantibus/qmk-hid-rgb](https://github.com/Drugantibus/qmk-hid-rgb) -- Python Raw HID RGB control for QMK
+- [zhogov/nuphy-state-of-qmk-firmware](https://github.com/zhogov/nuphy-state-of-qmk-firmware) -- tracks all NuPhy QMK fork status
