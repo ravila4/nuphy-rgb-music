@@ -193,6 +193,62 @@ class DaemonState:
         """Set a param on the active sidelight effect."""
         return self._set_param(self._active_sidelight(), name, value)
 
+    def _find_effect(self, effect_name: str) -> Any | None:
+        """Look up a keyboard effect by name (case-insensitive)."""
+        needle = effect_name.lower()
+        for viz in self._visualizers:
+            if getattr(viz, "name", "").lower() == needle:
+                return viz
+        return None
+
+    def get_params_by_name(
+        self, effect_name: str,
+    ) -> dict[str, VisualizerParam]:
+        """Return the params dict for the named effect, or ``{}``.
+
+        Unknown effect or effect without params both yield an empty dict.
+        """
+        return self._get_params(self._find_effect(effect_name))
+
+    def set_param_by_name(
+        self, effect_name: str, param: str, value: float,
+    ) -> VisualizerParam:
+        """Set a param on the named effect.
+
+        Raises ``ValueError`` if the effect is unknown or the param does
+        not exist on that effect.
+        """
+        effect = self._find_effect(effect_name)
+        if effect is None:
+            raise ValueError(f"unknown effect: {effect_name}")
+        return self._set_param(effect, param, value)
+
+    def get_effect_descriptions(self) -> dict[str, str]:
+        """Return ``{effect_name: description}`` for all keyboard effects.
+
+        Effects that don't declare a ``description`` attribute map to an
+        empty string.
+        """
+        result: dict[str, str] = {}
+        for viz in self._visualizers:
+            name = getattr(viz, "name", None)
+            if not name:
+                continue
+            result[name] = getattr(viz, "description", "") or ""
+        return result
+
+    def reset_params_by_name(self, effect_name: str) -> None:
+        """Reset all params on the named effect to their defaults.
+
+        Raises ``ValueError`` if the effect is unknown. No-op if the
+        effect has no params.
+        """
+        effect = self._find_effect(effect_name)
+        if effect is None:
+            raise ValueError(f"unknown effect: {effect_name}")
+        for p in self._get_params(effect).values():
+            p.reset()
+
     @property
     def paused(self) -> bool:
         with self._pause_lock:

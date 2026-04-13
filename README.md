@@ -154,8 +154,9 @@ echo '{"jsonrpc":"2.0","method":"quit","id":1}' | nc -U $XDG_RUNTIME_DIR/nuphy-r
 | Method | Params | Description |
 |--------|--------|-------------|
 | `get_status` | - | Current effect, sidelight, running state |
-| `list_effects` | - | All available effect and sidelight names |
+| `list_effects` | - | All available effect and sidelight names plus per-effect descriptions |
 | `set_effect` | `{"name": "..."}` | Switch keyboard effect |
+| `set_effect_and_get_params` | `{"name": "..."}` | Switch effect and return its params in one round-trip |
 | `set_sidelight` | `{"name": "..."}` | Switch sidelight effect |
 | `next_effect` | - | Cycle to next keyboard effect |
 | `prev_effect` | - | Cycle to previous keyboard effect |
@@ -163,6 +164,10 @@ echo '{"jsonrpc":"2.0","method":"quit","id":1}' | nc -U $XDG_RUNTIME_DIR/nuphy-r
 | `prev_sidelight` | - | Cycle to previous sidelight effect |
 | `get_params` | - | Tunable parameters for the active keyboard effect |
 | `set_param` | `{"name": "...", "value": N}` | Set a parameter on the active keyboard effect |
+| `reset_params` | - | Reset all params on the active keyboard effect to defaults |
+| `get_params_for` | `{"name": "..."}` | Params for a named (not necessarily active) effect |
+| `set_param_for` | `{"name": "...", "param": "...", "value": N}` | Set a param on a named effect |
+| `reset_params_for` | `{"name": "..."}` | Reset params on a named effect to defaults |
 | `get_side_params` | - | Tunable parameters for the active sidelight effect |
 | `set_side_param` | `{"name": "...", "value": N}` | Set a parameter on the active sidelight effect |
 | `set_paused` | `{"paused": true}` | Pause/resume rendering |
@@ -170,10 +175,18 @@ echo '{"jsonrpc":"2.0","method":"quit","id":1}' | nc -U $XDG_RUNTIME_DIR/nuphy-r
 
 Effects can expose tunable parameters (decay rates, brightness, etc.) with
 min/max ranges. Use `get_params` to discover what's available, then `set_param`
-to tweak values live. Parameters reset to defaults on restart.
+to tweak values live.
 
-Connected clients also receive push notifications (`effect_changed`,
-`sidelight_changed`) when the active effect is switched.
+Parameter overrides are persisted per effect in
+`~/.config/nuphy-rgb/params/<effect>.json` as a flat `{name: value}` dict.
+The daemon reads these at startup and applies them before IPC opens, so
+tunings survive restarts — even when the daemon is run headless without
+the menu bar app. The menu bar app writes these files on slider release;
+hand-editing the JSON also works, but only takes effect on the next
+daemon start. Unknown or out-of-range values are logged and skipped.
+
+Connected clients also receive push notifications when state changes:
+`effect_changed`, `sidelight_changed`, `paused_changed`, and `audio_level`.
 
 ## Keyboard Effects
 

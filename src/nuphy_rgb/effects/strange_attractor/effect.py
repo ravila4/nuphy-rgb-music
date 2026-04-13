@@ -72,6 +72,10 @@ class StrangeAttractor:
     """
 
     name = "Strange Attractor"
+    description = (
+        "Twelve particles orbit a Lorenz attractor; audio energy "
+        "stretches and contracts the orbits in real time."
+    )
 
     def __init__(self, seed: int | None = None) -> None:
         self._rng = np.random.default_rng(seed)

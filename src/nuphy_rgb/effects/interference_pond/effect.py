@@ -41,6 +41,10 @@ class InterferencePond:
     """
 
     name = "Interference Pond"
+    description = (
+        "Beats drop ripples onto the grid. Their superimposed wave fields "
+        "produce constructive and destructive interference per key."
+    )
 
     def __init__(self) -> None:
         self._ripples: deque[_Ripple] = deque(maxlen=_MAX_RIPPLES)

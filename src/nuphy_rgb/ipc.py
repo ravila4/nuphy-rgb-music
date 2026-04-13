@@ -101,6 +101,11 @@ class _Dispatcher:
             "quit": self._quit,
             "get_params": self._get_params,
             "set_param": self._set_param,
+            "reset_params": self._reset_params,
+            "set_effect_and_get_params": self._set_effect_and_get_params,
+            "get_params_for": self._get_params_for,
+            "set_param_for": self._set_param_for,
+            "reset_params_for": self._reset_params_for,
             "get_side_params": self._get_side_params,
             "set_side_param": self._set_side_param,
         }
@@ -126,6 +131,7 @@ class _Dispatcher:
         return {
             "effects": list(s.key.names),
             "sidelights": list(s.side.names) if s.side is not None else [],
+            "effect_descriptions": s.get_effect_descriptions(),
         }
 
     def _set_effect(self, params: dict | None) -> dict:
@@ -184,6 +190,42 @@ class _Dispatcher:
         value = _require_param(params, "value")
         p = self._state.set_active_param(name, float(value))
         return {"name": name, "value": p.get()}
+
+    def _reset_params(self, _params: dict | None) -> dict:
+        for p in self._state.get_active_params().values():
+            p.reset()
+        return {"ok": True}
+
+    def _set_effect_and_get_params(self, params: dict | None) -> dict:
+        name = _require_param(params, "name")
+        if not self._state.key.set_by_name(name):
+            raise ValueError(f"unknown effect: {name}")
+        # Snapshot name and params together. A concurrent next_effect can
+        # still slip in, but the returned {name, params} pair will at least
+        # describe the same effect as each other.
+        current_name = self._state.key.name
+        active_params = self._state.get_active_params()
+        return {
+            "name": current_name,
+            "params": {n: p.to_dict() for n, p in active_params.items()},
+        }
+
+    def _get_params_for(self, params: dict | None) -> dict:
+        name = _require_param(params, "name")
+        effect_params = self._state.get_params_by_name(name)
+        return {n: p.to_dict() for n, p in effect_params.items()}
+
+    def _set_param_for(self, params: dict | None) -> dict:
+        name = _require_param(params, "name")
+        param = _require_param(params, "param")
+        value = _require_param(params, "value")
+        p = self._state.set_param_by_name(name, param, float(value))
+        return {"name": name, "param": param, "value": p.get()}
+
+    def _reset_params_for(self, params: dict | None) -> dict:
+        name = _require_param(params, "name")
+        self._state.reset_params_by_name(name)
+        return {"ok": True}
 
     def _get_side_params(self, _params: dict | None) -> dict:
         active_params = self._state.get_active_side_params()

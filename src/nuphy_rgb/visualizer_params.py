@@ -20,6 +20,7 @@ class VisualizerParam:
     min: float
     max: float
     description: str = ""
+    order: int = 0
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def set(self, v: float) -> None:
@@ -52,4 +53,5 @@ class VisualizerParam:
             "min": self.min,
             "max": self.max,
             "description": self.description,
+            "order": self.order,
         }

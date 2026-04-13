@@ -34,6 +34,7 @@ from nuphy_rgb.hid_utils import (
     side_streaming_mode,
     streaming_mode,
 )
+from nuphy_rgb.param_store import apply_overrides_to_visualizers
 from nuphy_rgb.plugins import discover_effects, discover_sidelights
 from nuphy_rgb.probe import probe
 from nuphy_rgb.sidelights import ALL_SIDELIGHTS
@@ -174,6 +175,7 @@ def run(
         all_effect_classes = list(ALL_EFFECTS) + plugin_effects
 
         visualizers: list[Visualizer] = [cls() for cls in all_effect_classes]
+        apply_overrides_to_visualizers(visualizers)
         effect_names = [v.name for v in visualizers]
 
         # Set up sidelight visualizers (opt-in): built-in + plugins

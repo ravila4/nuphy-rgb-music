@@ -82,5 +82,11 @@ struct NuPhyRGBMenuApp: App {
             MenuView()
                 .environment(appState)
         }
+
+        Window("NuPhy RGB Settings", id: "tuning") {
+            TuningWindow()
+                .environment(appState)
+        }
+        .windowResizability(.contentSize)
     }
 }
