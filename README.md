@@ -222,10 +222,16 @@ discovered on next launch.
 ### Creating a plugin
 
 A plugin is a Python class with a `name` string and a `render(self, frame)`
-method. Import everything you need from `nuphy_rgb.plugin_api`:
+method. `render()` returns a list of 84 `(R, G, B)` tuples (one per LED,
+values 0-255) representing a single frame. Import everything you need from
+`nuphy_rgb.plugin_api`:
 
 ```python
-from nuphy_rgb.plugin_api import AudioFrame, NUM_LEDS, grid_to_leds, freq_to_hue, VisualizerParam
+import colorsys
+
+from nuphy_rgb.plugin_api import (
+    AudioFrame, NUM_ROWS, MAX_COLS, grid_to_leds, freq_to_hue, VisualizerParam,
+)
 
 class MyEffect:
     name = "My Effect"
@@ -240,10 +246,21 @@ class MyEffect:
         }
 
     def render(self, frame: AudioFrame) -> list[tuple[int, int, int]]:
+        # Build a 6x16 float grid (rows x cols x RGB), values 0.0-1.0
+        import numpy as np
+        grid = np.zeros((NUM_ROWS, MAX_COLS, 3))
+
+        # Map dominant frequency to a hue (0.0=red/bass, 1.0=blue/highs)
         hue = freq_to_hue(frame.dominant_freq)
-        brightness = int(frame.rms * 255 * self.params["intensity"].get())
-        # ... your logic here ...
-        return [(brightness, 0, 0)] * NUM_LEDS
+        brightness = frame.rms * self.params["intensity"].get()
+        r, g, b = colorsys.hsv_to_rgb(hue, 0.9, min(1.0, brightness))
+
+        # Light up the bottom row
+        for col in range(MAX_COLS):
+            grid[NUM_ROWS - 1, col] = (r, g, b)
+
+        # Convert the float grid to 84 (R, G, B) tuples with values 0-255
+        return grid_to_leds(grid)
 ```
 
 ### Plugin directory layout
