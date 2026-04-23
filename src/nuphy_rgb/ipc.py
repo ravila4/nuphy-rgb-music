@@ -98,6 +98,7 @@ class _Dispatcher:
             "next_sidelight": self._next_sidelight,
             "prev_sidelight": self._prev_sidelight,
             "set_paused": self._set_paused,
+            "set_shuffle": self._set_shuffle,
             "quit": self._quit,
             "get_params": self._get_params,
             "set_param": self._set_param,
@@ -124,6 +125,7 @@ class _Dispatcher:
             "sidelight": s.side.name if s.side is not None else None,
             "running": not s.quit_event.is_set(),
             "paused": s.paused,
+            "shuffle": s.shuffle_enabled,
         }
 
     def _list_effects(self, _params: dict | None) -> dict:
@@ -176,6 +178,15 @@ class _Dispatcher:
             )
         self._state.set_paused(paused)
         return {"paused": self._state.paused}
+
+    def _set_shuffle(self, params: dict | None) -> dict:
+        enabled = _require_param(params, "enabled")
+        if not isinstance(enabled, bool):
+            raise ValueError(
+                f"enabled must be a boolean, got {type(enabled).__name__}"
+            )
+        self._state.set_shuffle(enabled)
+        return {"enabled": self._state.shuffle_enabled}
 
     def _quit(self, _params: dict | None) -> dict:
         self._state.request_quit()
@@ -419,6 +430,9 @@ class IPCServer:
 
     def notify_paused_changed(self, paused: bool) -> None:
         self.broadcast(_notification("paused_changed", {"paused": paused}))
+
+    def notify_shuffle_changed(self, enabled: bool) -> None:
+        self.broadcast(_notification("shuffle_changed", {"enabled": enabled}))
 
     def notify_audio_level(self, raw_rms: float) -> None:
         self.broadcast(_notification("audio_level", {"raw_rms": round(raw_rms, 4)}))

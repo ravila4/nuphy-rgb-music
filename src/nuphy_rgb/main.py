@@ -17,7 +17,6 @@ import sounddevice as sd
 
 from nuphy_rgb.audio import AudioCapture
 from nuphy_rgb.audio_discovery import (
-    LoopbackResult,
     find_loopback_device,
     list_audio_devices,
     move_source_output_to_monitor,
@@ -37,6 +36,7 @@ from nuphy_rgb.hid_utils import (
 from nuphy_rgb.param_store import apply_overrides_to_visualizers
 from nuphy_rgb.plugins import discover_effects, discover_sidelights
 from nuphy_rgb.probe import probe
+from nuphy_rgb.shuffle import ShuffleManager
 from nuphy_rgb.sidelights import ALL_SIDELIGHTS
 from nuphy_rgb.state import DaemonState
 from nuphy_rgb.visualizer import Visualizer
@@ -96,6 +96,10 @@ def run(
     effect: str | None = None,
     sidelight: str | None = None,
     config_dir: Path | None = None,
+    shuffle: bool = False,
+    shuffle_dwell_s: float = 15.0,
+    shuffle_threshold: float = 0.05,
+    shuffle_debug: bool = False,
 ) -> None:
     if debug:
         logging.basicConfig(level=logging.DEBUG, format="%(name)s: %(message)s")
@@ -195,6 +199,16 @@ def run(
             visualizers=visualizers,
             side_visualizers=side_visualizers,
         )
+        if shuffle:
+            state.set_shuffle(True)
+            print(
+                f"Shuffle mode ON "
+                f"(threshold={shuffle_threshold}, dwell={shuffle_dwell_s}s)"
+            )
+        shuffle_manager = ShuffleManager(
+            threshold=shuffle_threshold,
+            min_dwell_s=shuffle_dwell_s,
+        )
 
         # Apply --effect if specified
         if effect is not None:
@@ -277,6 +291,12 @@ def run(
                             print(f"  Sidelight: {side_visualizers[new_side_idx].name}")
                             ipc.notify_sidelight_changed(side_visualizers[new_side_idx].name)
 
+                    # Check for shuffle toggle (from IPC)
+                    new_shuffle = state.poll_shuffle_changed()
+                    if new_shuffle is not None:
+                        print(f"  Shuffle: {'ON' if new_shuffle else 'OFF'}")
+                        ipc.notify_shuffle_changed(new_shuffle)
+
                     # Check for pause toggle (from IPC)
                     new_paused = state.poll_paused_changed()
                     if new_paused is not None:
@@ -300,6 +320,9 @@ def run(
                         if now - last_audio_broadcast >= 0.25:
                             ipc.notify_audio_level(frame.raw_rms)
                             last_audio_broadcast = now
+                        shuffle_manager.update(frame, state)
+                        if shuffle_debug and frame_count % 10 == 0:
+                            print(f"  tonal_change={frame.tonal_change:.3f}")
                         try:
                             last_colors = visualizers[state.key.index].render(frame)
                         except Exception:
@@ -423,6 +446,28 @@ def main():
         default=None,
         help="Custom plugin directory (default: ~/.config/nuphy-rgb).",
     )
+    parser.add_argument(
+        "--shuffle",
+        action="store_true",
+        help="Auto-switch effects on musical section transitions.",
+    )
+    parser.add_argument(
+        "--shuffle-dwell",
+        type=float,
+        default=15.0,
+        help="Minimum seconds between shuffle-triggered switches (default: 15).",
+    )
+    parser.add_argument(
+        "--shuffle-threshold",
+        type=float,
+        default=0.05,
+        help="tonal_change above which a transition is registered (default: 0.05).",
+    )
+    parser.add_argument(
+        "--shuffle-debug",
+        action="store_true",
+        help="Print tonal_change values for threshold calibration.",
+    )
     args = parser.parse_args()
 
     config_dir = Path(args.effects_dir) if args.effects_dir else None
@@ -457,6 +502,10 @@ def main():
         effect=args.effect,
         sidelight=None if args.no_sidelight else args.sidelight,
         config_dir=config_dir,
+        shuffle=args.shuffle,
+        shuffle_dwell_s=args.shuffle_dwell,
+        shuffle_threshold=args.shuffle_threshold,
+        shuffle_debug=args.shuffle_debug,
     )
 
 
