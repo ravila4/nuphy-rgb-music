@@ -10,6 +10,7 @@ protocol DaemonClientDelegate: AnyObject {
     func daemonClient(_ client: DaemonClient, didChangeEffect name: String)
     func daemonClient(_ client: DaemonClient, didChangeSidelight name: String)
     func daemonClient(_ client: DaemonClient, didChangePaused paused: Bool)
+    func daemonClient(_ client: DaemonClient, didChangeShuffle enabled: Bool)
     func daemonClientDidConnect(_ client: DaemonClient)
     func daemonClientDidDisconnect(_ client: DaemonClient)
 }
@@ -126,6 +127,14 @@ final class DaemonClient {
     func setPaused(_ paused: Bool) async throws -> PausedResult {
         let data = try await sendRequest(method: "set_paused", params: ["paused": paused])
         return try JSONDecoder().decode(PausedResult.self, from: data)
+    }
+
+    func setShuffle(_ enabled: Bool) async throws -> ShuffleResult {
+        let data = try await sendRequest(
+            method: "set_shuffle",
+            params: ["enabled": enabled],
+        )
+        return try JSONDecoder().decode(ShuffleResult.self, from: data)
     }
 
     func quit() async throws {
@@ -301,6 +310,10 @@ final class DaemonClient {
         case "paused_changed":
             if let result = try? decoder.decode(PausedResult.self, from: paramsData) {
                 delegate?.daemonClient(self, didChangePaused: result.paused)
+            }
+        case "shuffle_changed":
+            if let result = try? decoder.decode(ShuffleResult.self, from: paramsData) {
+                delegate?.daemonClient(self, didChangeShuffle: result.enabled)
             }
         default:
             break

@@ -69,10 +69,15 @@ struct StatusResult: Decodable, Sendable {
     let sidelight: String?
     let running: Bool
     let paused: Bool
+    let shuffle: Bool?
 }
 
 struct PausedResult: Decodable, Sendable {
     let paused: Bool
+}
+
+struct ShuffleResult: Decodable, Sendable {
+    let enabled: Bool
 }
 
 struct ListEffectsResult: Decodable, Sendable {
