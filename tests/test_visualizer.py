@@ -1,7 +1,6 @@
 
 from nuphy_rgb.visualizer import freq_to_hue
 
-from helpers import make_frame
 
 NUM_LEDS = 84
 

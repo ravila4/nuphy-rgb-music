@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nuphy_rgb.effects.grid import LED_ROW_COL, NUM_LEDS, ROWS
+from nuphy_rgb.effects.grid import NUM_LEDS, ROWS
 
 # (x_u, width_u) per logical column, per logical row.
 # Row index matches ROWS in effects.grid; column index is position within that row.
