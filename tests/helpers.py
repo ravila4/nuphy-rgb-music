@@ -13,6 +13,7 @@ def make_frame(**kwargs) -> AudioFrame:
         spectral_centroid=0.0,
         spectral_flatness=0.0,
         tonal_change=0.0,
+        timbral_change=0.0,
     )
     defaults.update(kwargs)
     # raw_rms (pre-AGC) defaults to rms for convenience in tests.

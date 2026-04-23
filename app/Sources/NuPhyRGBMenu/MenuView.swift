@@ -51,6 +51,13 @@ struct MenuView: View {
             Button(appState.isPaused ? "Resume" : "Pause") {
                 appState.togglePause()
             }
+            Toggle(
+                "Shuffle",
+                isOn: Binding(
+                    get: { appState.isShuffleEnabled },
+                    set: { appState.setShuffle($0) },
+                ),
+            )
         } else {
             Button("Start Daemon") {
                 appState.startDaemon()

@@ -29,13 +29,24 @@ class ShuffleManager:
         self._consecutive_above = 0
         self._last_switch_t = float("-inf")
 
+    @property
+    def excluded_names(self) -> frozenset[str]:
+        """Lowercased names of effects that shuffle will never pick."""
+        return frozenset(self._excluded)
+
     def update(self, frame: AudioFrame, state: DaemonState) -> bool:
-        """Feed one frame. Returns True iff an effect switch was triggered."""
+        """Feed one frame. Returns True iff an effect switch was triggered.
+
+        Shuffle fires on the OR of harmonic (chroma) and timbral (spectrum)
+        change, so a drum-driven arrangement shift with stable chords still
+        counts as a transition.
+        """
         if not state.shuffle_enabled:
             self._consecutive_above = 0
             return False
 
-        if frame.tonal_change > self._threshold:
+        change = max(frame.tonal_change, frame.timbral_change)
+        if change > self._threshold:
             self._consecutive_above += 1
         else:
             self._consecutive_above = 0

@@ -7,6 +7,7 @@ from nuphy_rgb.audio import (
     AudioFrame,
     BeatDetector,
     ExpFilter,
+    TimbralChangeDetector,
     TonalChangeDetector,
     build_chroma_filterbank,
     build_spectrum_bin_edges,
@@ -330,6 +331,55 @@ class TestTonalChangeDetector:
             assert det.update((0.0,) * 12, is_silent=True) == 0.0
         # First non-silent C major frame after silence — should still be low
         d = det.update(self.C_MAJOR, is_silent=False)
+        assert d < 0.05, f"silence should not spoil reference, got d={d}"
+
+
+class TestTimbralChangeDetector:
+    """Detector fires on arrangement shifts (same chords, new spectrum)."""
+
+    # Bassy spectrum (sub+low heavy, quiet highs): single low instrument.
+    BASSY = (1.0, 1.0, 0.8, 0.6, 0.2, 0.1, 0.05, 0.05,
+             0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    # Bright spectrum (drums + hats + synth stabs): wide band, high-heavy.
+    BRIGHT = (0.2, 0.2, 0.3, 0.4, 0.6, 0.8, 0.9, 1.0,
+              1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3)
+
+    def test_first_frame_returns_zero(self):
+        det = TimbralChangeDetector()
+        assert det.update(self.BASSY, is_silent=False) == 0.0
+
+    def test_steady_spectrum_stays_low(self):
+        det = TimbralChangeDetector()
+        distances = []
+        for _ in range(100):
+            distances.append(det.update(self.BASSY, is_silent=False))
+        assert max(distances[20:]) < 0.05
+
+    def test_arrangement_shift_spikes(self):
+        det = TimbralChangeDetector()
+        # Establish bassy spectrum as slow reference (>8s = >240 frames).
+        for _ in range(400):
+            det.update(self.BASSY, is_silent=False)
+        # Bright arrangement enters. Fast window is 1s, ~60 frames to saturate.
+        peak = 0.0
+        for _ in range(120):
+            peak = max(peak, det.update(self.BRIGHT, is_silent=False))
+        assert peak > 0.2, f"arrangement shift should spike, got peak={peak}"
+
+    def test_returns_float_in_zero_one(self):
+        det = TimbralChangeDetector()
+        for spec in (self.BASSY, self.BRIGHT, (0.1,) * 16):
+            d = det.update(spec, is_silent=False)
+            assert isinstance(d, float)
+            assert 0.0 <= d <= 1.0
+
+    def test_silence_does_not_update_reference(self):
+        det = TimbralChangeDetector()
+        for _ in range(300):
+            det.update(self.BASSY, is_silent=False)
+        for _ in range(200):
+            assert det.update((0.0,) * 16, is_silent=True) == 0.0
+        d = det.update(self.BASSY, is_silent=False)
         assert d < 0.05, f"silence should not spoil reference, got d={d}"
 
 

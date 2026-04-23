@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import random
 import sys
 import time
 from contextlib import ExitStack
@@ -216,6 +217,14 @@ def run(
                 known = ", ".join(effect_names)
                 print(f"Error: unknown effect '{effect}'. Known effects: {known}")
                 sys.exit(1)
+        elif shuffle:
+            # Random start so shuffle sessions don't always begin on effect[0].
+            eligible = [
+                i for i, n in enumerate(effect_names)
+                if n.lower() not in shuffle_manager.excluded_names
+            ]
+            if eligible:
+                state.key.set(random.choice(eligible))
 
         # Apply --sidelight if specified
         if sidelight is not None and state.side is not None:
@@ -322,7 +331,10 @@ def run(
                             last_audio_broadcast = now
                         shuffle_manager.update(frame, state)
                         if shuffle_debug and frame_count % 10 == 0:
-                            print(f"  tonal_change={frame.tonal_change:.3f}")
+                            print(
+                                f"  tonal={frame.tonal_change:.3f} "
+                                f"timbral={frame.timbral_change:.3f}"
+                            )
                         try:
                             last_colors = visualizers[state.key.index].render(frame)
                         except Exception:
@@ -461,12 +473,13 @@ def main():
         "--shuffle-threshold",
         type=float,
         default=0.05,
-        help="tonal_change above which a transition is registered (default: 0.05).",
+        help="max(tonal,timbral) change above which a transition fires "
+             "(default: 0.05).",
     )
     parser.add_argument(
         "--shuffle-debug",
         action="store_true",
-        help="Print tonal_change values for threshold calibration.",
+        help="Print tonal/timbral change values for threshold calibration.",
     )
     args = parser.parse_args()
 

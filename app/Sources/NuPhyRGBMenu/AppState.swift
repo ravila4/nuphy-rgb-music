@@ -20,6 +20,7 @@ class AppState: DaemonClientDelegate {
     var isConnected = false
     var audioLevel: Double = 0.0
     var isPaused = false
+    var isShuffleEnabled = false
 
     // Tuning window state
     var selectedEffectForTuning: String?
@@ -99,6 +100,21 @@ class AppState: DaemonClientDelegate {
                 isPaused = result.paused
             } catch {
                 logger.error("setPaused error: \(error)")
+            }
+        }
+    }
+
+    func setShuffle(_ enabled: Bool) {
+        // Optimistic: flip the UI immediately; reconcile with daemon reply.
+        // The daemon also broadcasts shuffle_changed, which will re-sync if
+        // the request fails or a concurrent CLI toggle disagrees.
+        isShuffleEnabled = enabled
+        Task {
+            do {
+                let result = try await client.setShuffle(enabled)
+                isShuffleEnabled = result.enabled
+            } catch {
+                logger.error("setShuffle error: \(error)")
             }
         }
     }
@@ -232,6 +248,7 @@ class AppState: DaemonClientDelegate {
                 activeEffect = status.effect
                 activeSidelight = status.sidelight
                 isPaused = status.paused
+                isShuffleEnabled = status.shuffle ?? false
 
                 let list = try await client.listEffects()
                 effects = list.effects
@@ -262,6 +279,7 @@ class AppState: DaemonClientDelegate {
         activeSidelight = nil
         audioLevel = 0.0
         isPaused = false
+        isShuffleEnabled = false
     }
 
     func daemonClient(_ client: DaemonClient, didReceiveAudioLevel rms: Double) {
@@ -278,5 +296,9 @@ class AppState: DaemonClientDelegate {
 
     func daemonClient(_ client: DaemonClient, didChangePaused paused: Bool) {
         isPaused = paused
+    }
+
+    func daemonClient(_ client: DaemonClient, didChangeShuffle enabled: Bool) {
+        isShuffleEnabled = enabled
     }
 }
