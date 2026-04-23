@@ -43,6 +43,7 @@ class AudioFrame:
     spectral_centroid: float = 0.0   # Hz, like dominant_freq
     spectral_flatness: float = 0.0   # 0.0 (tonal) to 1.0 (noise)
     tonal_change: float = 0.0        # 0.0 (steady) to 1.0 (new tonal center)
+    timbral_change: float = 0.0      # 0.0 (steady) to 1.0 (new arrangement)
 
 
 class ExpFilter:
@@ -254,6 +255,48 @@ class TonalChangeDetector:
         return max(0.0, 1.0 - similarity)
 
 
+class TimbralChangeDetector:
+    """Cosine distance between fast and slow log-spectrum EMAs.
+
+    Complements TonalChangeDetector: chroma sees harmony, the spectrum
+    envelope sees arrangement. A drum fill entering over the same chord
+    progression leaves chroma nearly unchanged but shifts the spectral
+    envelope — this detector fires on that. Same EMA-pair + cosine-distance
+    pattern as TonalChangeDetector, shorter windows because timbral shifts
+    happen on the scale of a bar, not a section.
+    """
+
+    def __init__(
+        self,
+        fast_window_s: float = 1.0,
+        slow_window_s: float = 8.0,
+        fps: int = 30,
+    ):
+        dt = 1.0 / fps
+        self._alpha_fast = dt / (fast_window_s + dt)
+        self._alpha_slow = dt / (slow_window_s + dt)
+        self._fast: np.ndarray | None = None
+        self._slow: np.ndarray | None = None
+
+    def update(self, spectrum: tuple[float, ...], is_silent: bool) -> float:
+        """Feed one spectrum frame. Returns cosine distance in [0, 1]."""
+        if is_silent:
+            return 0.0
+        s = np.asarray(spectrum, dtype=np.float64)
+        if self._fast is None:
+            self._fast = s.copy()
+            self._slow = s.copy()
+            return 0.0
+        self._fast = self._alpha_fast * s + (1 - self._alpha_fast) * self._fast
+        self._slow = self._alpha_slow * s + (1 - self._alpha_slow) * self._slow
+        nf = float(np.linalg.norm(self._fast))
+        ns = float(np.linalg.norm(self._slow))
+        if nf < 1e-6 or ns < 1e-6:
+            return 0.0
+        similarity = float(np.dot(self._fast, self._slow) / (nf * ns))
+        return max(0.0, 1.0 - similarity)
+
+
 class BeatDetector:
     """Energy-threshold beat detector with refractory period."""
 
@@ -338,6 +381,7 @@ class AudioCapture:
         ]
         self._flatness_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
         self._tonal_detector = TonalChangeDetector()
+        self._timbral_detector = TimbralChangeDetector()
         self._stream: sd.InputStream | None = None
 
     @staticmethod
@@ -470,6 +514,9 @@ class AudioCapture:
         is_silent = raw_rms < SILENCE_FLOOR
         tonal_change = self._tonal_detector.update(chroma, is_silent)
 
+        # Timbral change (same trick on the log-spectrum envelope)
+        timbral_change = self._timbral_detector.update(spectrum, is_silent)
+
         return AudioFrame(
             bass=bass,
             mids=mids,
@@ -488,4 +535,5 @@ class AudioCapture:
             spectral_centroid=spectral_centroid,
             spectral_flatness=spectral_flatness,
             tonal_change=tonal_change,
+            timbral_change=timbral_change,
         )

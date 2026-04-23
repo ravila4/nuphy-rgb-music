@@ -45,6 +45,18 @@ def test_above_threshold_with_hysteresis_switches(state):
     assert state.key.index == 1  # moved from A to B
 
 
+def test_timbral_change_alone_triggers(state):
+    """Harmonic stays flat; arrangement shift (timbral) alone should switch."""
+    shuffle = ShuffleManager(threshold=0.3, hysteresis_frames=3, min_dwell_s=0.0)
+    for i in range(3):
+        fired = shuffle.update(
+            make_frame(tonal_change=0.0, timbral_change=0.5, timestamp=i * 0.03),
+            state,
+        )
+    assert fired is True
+    assert state.key.index == 1
+
+
 def test_hysteresis_resets_on_dip(state):
     shuffle = ShuffleManager(threshold=0.3, hysteresis_frames=3, min_dwell_s=0.0)
     shuffle.update(make_frame(tonal_change=0.5, timestamp=0.0), state)
