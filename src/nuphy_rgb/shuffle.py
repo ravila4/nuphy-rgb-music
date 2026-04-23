@@ -29,6 +29,11 @@ class ShuffleManager:
         self._consecutive_above = 0
         self._last_switch_t = float("-inf")
 
+    @property
+    def excluded_names(self) -> frozenset[str]:
+        """Lowercased names of effects that shuffle will never pick."""
+        return frozenset(self._excluded)
+
     def update(self, frame: AudioFrame, state: DaemonState) -> bool:
         """Feed one frame. Returns True iff an effect switch was triggered."""
         if not state.shuffle_enabled:

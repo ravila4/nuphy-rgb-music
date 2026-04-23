@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import random
 import sys
 import time
 from contextlib import ExitStack
@@ -216,6 +217,14 @@ def run(
                 known = ", ".join(effect_names)
                 print(f"Error: unknown effect '{effect}'. Known effects: {known}")
                 sys.exit(1)
+        elif shuffle:
+            # Random start so shuffle sessions don't always begin on effect[0].
+            eligible = [
+                i for i, n in enumerate(effect_names)
+                if n.lower() not in shuffle_manager.excluded_names
+            ]
+            if eligible:
+                state.key.set(random.choice(eligible))
 
         # Apply --sidelight if specified
         if sidelight is not None and state.side is not None:
