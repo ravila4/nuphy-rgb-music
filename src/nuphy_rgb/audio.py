@@ -206,7 +206,9 @@ def compute_spectral_flatness(magnitudes: np.ndarray) -> float:
     arithmetic_mean = float(np.mean(power))
     if arithmetic_mean < 1e-20:
         return 0.0
-    log_mean = float(np.mean(np.log(np.clip(power, 1e-10, None))))
+    # eps tied to the arithmetic-mean guard (power scale), not an arbitrary
+    # floor — a coarse floor misclassifies quiet pure tones as maximally noisy.
+    log_mean = float(np.mean(np.log(power + 1e-20)))
     geometric_mean = float(np.exp(log_mean))
     return min(geometric_mean / arithmetic_mean, 1.0)
 

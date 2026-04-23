@@ -259,6 +259,22 @@ class TestComputeSpectralFlatness:
         mags, _ = _make_sine_fft(440.0)
         assert isinstance(compute_spectral_flatness(mags), float)
 
+    def test_quiet_pure_tone_still_tonal(self):
+        """Quiet narrow-band signal must not be misclassified as noise.
+
+        Regression: an absolute-valued epsilon in the log floor would drag
+        a quiet tone's geometric mean above its arithmetic mean, clamping
+        flatness to 1.0 (max noise). Eps must be tied to the power scale.
+        """
+        n_bins = FFT_SIZE // 2 + 1
+        for peak_mag in (1e-3, 1e-4, 1e-5):
+            mags = np.zeros(n_bins)
+            mags[100] = peak_mag
+            flatness = compute_spectral_flatness(mags)
+            assert flatness < 0.2, (
+                f"peak={peak_mag:.0e} should read tonal, got flatness={flatness}"
+            )
+
 
 class TestMultiBandBeatDetector:
     """BeatDetector already works for bass — verify it works independently for mids/highs."""
@@ -590,15 +606,19 @@ class TestAudioCapture:
 
     def test_spectral_centroid_in_frame(self):
         cap = self._make_capture()
-        chunks = self._make_contiguous_chunks(440.0, 3)
-        for chunk in chunks:
+        # Feed enough chunks to stabilize AGC, then get a clean frame
+        chunks = self._make_contiguous_chunks(440.0, 5)
+        for chunk in chunks[:-1]:
             cap._queue.put_nowait(chunk)
             cap.process_latest()
-        cap._queue.put_nowait(chunks[0])
+        # Feed final chunk to get a clean frame from stable audio
+        cap._queue.put_nowait(chunks[-1])
         frame = cap.process_latest()
         assert frame is not None
         assert isinstance(frame.spectral_centroid, float)
-        assert frame.spectral_centroid > 0.0
+        # Hz-plausible range for a 440 Hz input — catches accidental
+        # normalization regressions that would fold centroid to 0-1.
+        assert 300.0 < frame.spectral_centroid < 600.0
 
     def test_spectral_flatness_in_frame(self):
         cap = self._make_capture()
