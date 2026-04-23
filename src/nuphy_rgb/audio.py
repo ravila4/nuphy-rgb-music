@@ -40,6 +40,8 @@ class AudioFrame:
     high_beat: bool = False
     spectrum: tuple[float, ...] = (0.0,) * NUM_SPECTRUM_BINS
     chroma: tuple[float, ...] = (0.0,) * NUM_CHROMA_BINS
+    spectral_centroid: float = 0.0   # Hz, like dominant_freq
+    spectral_flatness: float = 0.0   # 0.0 (tonal) to 1.0 (noise)
 
 
 class ExpFilter:
@@ -190,6 +192,25 @@ def compute_onset_strength(rms: float, prev_rms: float) -> float:
     return max(delta, 0.0)
 
 
+def compute_spectral_centroid(magnitudes: np.ndarray, freqs: np.ndarray) -> float:
+    """Weighted mean frequency by magnitude. Returns Hz, or 0.0 for silence."""
+    total = float(np.sum(magnitudes))
+    if total < 1e-10:
+        return 0.0
+    return float(np.sum(freqs * magnitudes) / total)
+
+
+def compute_spectral_flatness(magnitudes: np.ndarray) -> float:
+    """Geometric/arithmetic mean ratio of power spectrum. 0=tonal, 1=noise."""
+    power = magnitudes ** 2
+    arithmetic_mean = float(np.mean(power))
+    if arithmetic_mean < 1e-20:
+        return 0.0
+    log_mean = float(np.mean(np.log(np.clip(power, 1e-10, None))))
+    geometric_mean = float(np.exp(log_mean))
+    return min(geometric_mean / arithmetic_mean, 1.0)
+
+
 class BeatDetector:
     """Energy-threshold beat detector with refractory period."""
 
@@ -272,6 +293,7 @@ class AudioCapture:
         self._chroma_filters = [
             ExpFilter(alpha_rise=0.6, alpha_decay=0.1) for _ in range(NUM_CHROMA_BINS)
         ]
+        self._flatness_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
         self._stream: sd.InputStream | None = None
 
     @staticmethod
@@ -393,6 +415,13 @@ class AudioCapture:
             for i in range(NUM_CHROMA_BINS)
         )
 
+        # Spectral centroid (raw Hz, no normalization — like dominant_freq)
+        spectral_centroid = compute_spectral_centroid(magnitudes, self._freqs)
+
+        # Spectral flatness (self-normalizing 0-1, ExpFilter smoothed)
+        raw_flatness = compute_spectral_flatness(magnitudes)
+        spectral_flatness = self._flatness_filter.update(raw_flatness)
+
         return AudioFrame(
             bass=bass,
             mids=mids,
@@ -408,4 +437,6 @@ class AudioCapture:
             high_beat=high_beat,
             spectrum=spectrum,
             chroma=chroma,
+            spectral_centroid=spectral_centroid,
+            spectral_flatness=spectral_flatness,
         )
