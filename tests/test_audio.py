@@ -13,6 +13,8 @@ from nuphy_rgb.audio import (
     compute_chroma,
     compute_dominant_freq,
     compute_onset_strength,
+    compute_spectral_centroid,
+    compute_spectral_flatness,
     compute_spectral_flux,
     compute_spectrum_bins,
 )
@@ -207,6 +209,71 @@ class TestComputeOnsetStrength:
 
     def test_returns_float(self):
         assert isinstance(compute_onset_strength(0.5, 0.3), float)
+
+
+class TestComputeSpectralCentroid:
+    def test_single_tone_returns_that_frequency(self):
+        mags, freqs = _make_sine_fft(440.0)
+        centroid = compute_spectral_centroid(mags, freqs)
+        # FFT bin resolution ~23 Hz; centroid is a weighted mean so tolerance is wider
+        assert abs(centroid - 440.0) < 50.0
+
+    def test_silence_returns_zero(self):
+        mags, freqs = _make_silence_fft()
+        assert compute_spectral_centroid(mags, freqs) == 0.0
+
+    def test_higher_tone_gives_higher_centroid(self):
+        mags_low, freqs = _make_sine_fft(200.0)
+        mags_high, _ = _make_sine_fft(4000.0)
+        assert compute_spectral_centroid(mags_high, freqs) > compute_spectral_centroid(
+            mags_low, freqs
+        )
+
+    def test_returns_float(self):
+        mags, freqs = _make_sine_fft(440.0)
+        assert isinstance(compute_spectral_centroid(mags, freqs), float)
+
+
+class TestComputeSpectralFlatness:
+    def test_pure_tone_near_zero(self):
+        mags, _freqs = _make_sine_fft(440.0)
+        flatness = compute_spectral_flatness(mags)
+        assert flatness < 0.1
+
+    def test_flat_spectrum_near_one(self):
+        mags = np.ones(FFT_SIZE // 2 + 1)
+        flatness = compute_spectral_flatness(mags)
+        assert flatness > 0.9
+
+    def test_silence_returns_zero(self):
+        mags, _freqs = _make_silence_fft()
+        assert compute_spectral_flatness(mags) == 0.0
+
+    def test_bounded_zero_to_one(self):
+        for freq in (100.0, 440.0, 4000.0):
+            mags, _ = _make_sine_fft(freq)
+            flatness = compute_spectral_flatness(mags)
+            assert 0.0 <= flatness <= 1.0
+
+    def test_returns_float(self):
+        mags, _ = _make_sine_fft(440.0)
+        assert isinstance(compute_spectral_flatness(mags), float)
+
+    def test_quiet_pure_tone_still_tonal(self):
+        """Quiet narrow-band signal must not be misclassified as noise.
+
+        Regression: an absolute-valued epsilon in the log floor would drag
+        a quiet tone's geometric mean above its arithmetic mean, clamping
+        flatness to 1.0 (max noise). Eps must be tied to the power scale.
+        """
+        n_bins = FFT_SIZE // 2 + 1
+        for peak_mag in (1e-3, 1e-4, 1e-5):
+            mags = np.zeros(n_bins)
+            mags[100] = peak_mag
+            flatness = compute_spectral_flatness(mags)
+            assert flatness < 0.2, (
+                f"peak={peak_mag:.0e} should read tonal, got flatness={flatness}"
+            )
 
 
 class TestMultiBandBeatDetector:
@@ -536,6 +603,34 @@ class TestAudioCapture:
         assert max(frame.chroma) > 0.9
         # A440 should dominate the A bin (index 9)
         assert frame.chroma.index(max(frame.chroma)) == 9
+
+    def test_spectral_centroid_in_frame(self):
+        cap = self._make_capture()
+        # Feed enough chunks to stabilize AGC, then get a clean frame
+        chunks = self._make_contiguous_chunks(440.0, 5)
+        for chunk in chunks[:-1]:
+            cap._queue.put_nowait(chunk)
+            cap.process_latest()
+        # Feed final chunk to get a clean frame from stable audio
+        cap._queue.put_nowait(chunks[-1])
+        frame = cap.process_latest()
+        assert frame is not None
+        assert isinstance(frame.spectral_centroid, float)
+        # Hz-plausible range for a 440 Hz input — catches accidental
+        # normalization regressions that would fold centroid to 0-1.
+        assert 300.0 < frame.spectral_centroid < 600.0
+
+    def test_spectral_flatness_in_frame(self):
+        cap = self._make_capture()
+        chunks = self._make_contiguous_chunks(440.0, 3)
+        for chunk in chunks:
+            cap._queue.put_nowait(chunk)
+            cap.process_latest()
+        cap._queue.put_nowait(chunks[0])
+        frame = cap.process_latest()
+        assert frame is not None
+        assert isinstance(frame.spectral_flatness, float)
+        assert 0.0 <= frame.spectral_flatness <= 1.0
 
 
 class TestBuildChromaFilterbank:
