@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import IOKit.hid
 import os
 import SwiftUI
@@ -19,12 +20,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func checkPermissions() {
-        // Screen & System Audio Recording: no reliable preflight API for Process Tap
-        // audio capture (CGPreflightScreenCaptureAccess checks screen capture, not audio).
-        // Prompt once on first launch; the daemon handles the failure case.
-        let promptedKey = "hasPromptedForScreenRecording"
-        if !UserDefaults.standard.bool(forKey: promptedKey) {
-            UserDefaults.standard.set(true, forKey: promptedKey)
+        // Screen & System Audio Recording (macOS 14.2+ Process Tap uses this TCC
+        // service, same as window capture). Preflight is silent; Request
+        // triggers the OS prompt on first call, then no-ops on subsequent calls.
+        // The grant only takes effect after app restart, so we always follow up
+        // with our own explainer alert when access is still missing.
+        let hasScreenCapture = CGPreflightScreenCaptureAccess()
+        logger.warning("permissions: screenCapture=\(hasScreenCapture)")
+        if !hasScreenCapture {
+            CGRequestScreenCaptureAccess()
             promptForPermission(
                 name: "Screen & System Audio Recording",
                 reason: "to capture system audio for music-reactive effects",
