@@ -42,6 +42,7 @@ class AudioFrame:
     chroma: tuple[float, ...] = (0.0,) * NUM_CHROMA_BINS
     spectral_centroid: float = 0.0   # Hz, like dominant_freq
     spectral_flatness: float = 0.0   # 0.0 (tonal) to 1.0 (noise)
+    tonal_change: float = 0.0        # 0.0 (steady) to 1.0 (new tonal center)
 
 
 class ExpFilter:
@@ -213,6 +214,46 @@ def compute_spectral_flatness(magnitudes: np.ndarray) -> float:
     return min(geometric_mean / arithmetic_mean, 1.0)
 
 
+class TonalChangeDetector:
+    """Cosine distance between fast and slow chroma EMAs.
+
+    Fires on harmonic section changes (verse→chorus, key shifts) while
+    staying low for per-chord variation within a single key. Silence does
+    not update the EMAs — otherwise references would decay to zero and
+    produce spurious spikes on resume.
+    """
+
+    def __init__(
+        self,
+        fast_window_s: float = 2.0,
+        slow_window_s: float = 20.0,
+        fps: int = 30,
+    ):
+        dt = 1.0 / fps
+        self._alpha_fast = dt / (fast_window_s + dt)
+        self._alpha_slow = dt / (slow_window_s + dt)
+        self._fast: np.ndarray | None = None
+        self._slow: np.ndarray | None = None
+
+    def update(self, chroma: tuple[float, ...], is_silent: bool) -> float:
+        """Feed one chroma frame. Returns cosine distance in [0, 1]."""
+        if is_silent:
+            return 0.0
+        c = np.asarray(chroma, dtype=np.float64)
+        if self._fast is None:
+            self._fast = c.copy()
+            self._slow = c.copy()
+            return 0.0
+        self._fast = self._alpha_fast * c + (1 - self._alpha_fast) * self._fast
+        self._slow = self._alpha_slow * c + (1 - self._alpha_slow) * self._slow
+        nf = float(np.linalg.norm(self._fast))
+        ns = float(np.linalg.norm(self._slow))
+        if nf < 1e-6 or ns < 1e-6:
+            return 0.0
+        similarity = float(np.dot(self._fast, self._slow) / (nf * ns))
+        return max(0.0, 1.0 - similarity)
+
+
 class BeatDetector:
     """Energy-threshold beat detector with refractory period."""
 
@@ -296,6 +337,7 @@ class AudioCapture:
             ExpFilter(alpha_rise=0.6, alpha_decay=0.1) for _ in range(NUM_CHROMA_BINS)
         ]
         self._flatness_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
+        self._tonal_detector = TonalChangeDetector()
         self._stream: sd.InputStream | None = None
 
     @staticmethod
@@ -424,6 +466,10 @@ class AudioCapture:
         raw_flatness = compute_spectral_flatness(magnitudes)
         spectral_flatness = self._flatness_filter.update(raw_flatness)
 
+        # Tonal change (cosine distance between fast/slow chroma EMAs)
+        is_silent = raw_rms < SILENCE_FLOOR
+        tonal_change = self._tonal_detector.update(chroma, is_silent)
+
         return AudioFrame(
             bass=bass,
             mids=mids,
@@ -441,4 +487,5 @@ class AudioCapture:
             chroma=chroma,
             spectral_centroid=spectral_centroid,
             spectral_flatness=spectral_flatness,
+            tonal_change=tonal_change,
         )
