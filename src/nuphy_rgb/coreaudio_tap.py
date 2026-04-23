@@ -145,7 +145,6 @@ class ProcessTap:
         from CoreAudio import (
             AudioHardwareCreateAggregateDevice,
             AudioHardwareCreateProcessTap,
-            AudioHardwareDestroyAggregateDevice,
             AudioHardwareDestroyProcessTap,
             kAudioHardwareNoError,
         )

@@ -105,6 +105,9 @@ class DaemonState:
         self._paused = False
         self._paused_changed = False
         self._pause_lock = threading.Lock()
+        self._shuffle_enabled = False
+        self._shuffle_changed = False
+        self._shuffle_lock = threading.Lock()
         self._visualizers = list(visualizers)
         self._side_visualizers = list(side_visualizers)
 
@@ -220,3 +223,25 @@ class DaemonState:
     def request_quit(self) -> None:
         """Signal the main loop to exit."""
         self.quit_event.set()
+
+    @property
+    def shuffle_enabled(self) -> bool:
+        with self._shuffle_lock:
+            return self._shuffle_enabled
+
+    def set_shuffle(self, enabled: bool) -> bool:
+        """Set shuffle state. Returns True if state actually changed."""
+        with self._shuffle_lock:
+            if self._shuffle_enabled == enabled:
+                return False
+            self._shuffle_enabled = enabled
+            self._shuffle_changed = True
+            return True
+
+    def poll_shuffle_changed(self) -> bool | None:
+        """Return current shuffle state if changed since last poll, else None."""
+        with self._shuffle_lock:
+            if self._shuffle_changed:
+                self._shuffle_changed = False
+                return self._shuffle_enabled
+            return None

@@ -6,8 +6,6 @@ import sys
 
 import hid
 
-log = logging.getLogger(__name__)
-
 from nuphy_rgb.hid_utils import (
     CMD_GET_TOTAL_LEDS,
     build_packet,
@@ -15,6 +13,8 @@ from nuphy_rgb.hid_utils import (
     send_frame,
     streaming_mode,
 )
+
+log = logging.getLogger(__name__)
 
 
 def probe(device: hid.device) -> int | None:
