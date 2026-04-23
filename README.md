@@ -194,11 +194,19 @@ Connected clients also receive push notifications when state changes:
 |--------|-------------|
 | Aurora Borealis | Spectroscopic curtain shimmer driven by audio energy |
 | Chromatic Keys | Each key glows its pitch class color from chroma analysis |
+| Conway's Jukebox | Game of Life seeded by beats, cells dyed by the current chord |
+| Double Pendulum | Chaotic pendulum tip paints a phosphor trail; loud music dilates time |
 | Event Horizon | Gravitational lensing effect around a central attractor |
 | Interference Pond | Ripple interference patterns from beat-triggered wave sources |
+| Kármán Street | Vortex street shed behind an obstacle, with warm/cool dye in the flow |
+| Lightning | Bass beats trigger branching discharge bolts with plasma afterglow |
 | Mycelium | Organic growth network that branches on beats |
+| Navier-Stokes | Two Kelvin-Helmholtz dye streams driven by bass vs. highs |
+| Polarity | Twelve charged bodies on a torus, one per pitch class, interacting |
+| Raycaster | First-person view through a toroidal pillar maze |
 | Spectral Waterfall | Scrolling spectrogram -- frequency on x-axis, time on y-axis |
 | Strange Attractor | Chaotic particle system mapped to the keyboard grid |
+| Three Body | Gravitational three-body system driven by bass/mid/high energy |
 | Blackout | All LEDs off (useful for isolating sidelight effects) |
 
 ## Sidelights
@@ -212,6 +220,7 @@ handle them instead.
 | VU Meter | Symmetric bass-driven bar graph |
 | Chroma Bars | Each LED tracks a pitch class: left strip C-F, right strip F#-B |
 | Chord Glow | Both strips glow the blended color of the current chord |
+| Comet | Beat-spawned pulses rise with trails; hue frozen at spawn by dominant frequency |
 
 ## Plugins
 
