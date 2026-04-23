@@ -7,6 +7,7 @@ from nuphy_rgb.audio import (
     AudioFrame,
     BeatDetector,
     ExpFilter,
+    TonalChangeDetector,
     build_chroma_filterbank,
     build_spectrum_bin_edges,
     compute_band_energies,
@@ -274,6 +275,62 @@ class TestComputeSpectralFlatness:
             assert flatness < 0.2, (
                 f"peak={peak_mag:.0e} should read tonal, got flatness={flatness}"
             )
+
+
+class TestTonalChangeDetector:
+    """Detector fires on harmonic section changes, stays quiet within a key."""
+
+    C_MAJOR = (1.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0)  # C, E, G
+    E_MAJOR = (0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.5)  # E, G#, B
+
+    def test_first_frame_returns_zero(self):
+        det = TonalChangeDetector()
+        assert det.update(self.C_MAJOR, is_silent=False) == 0.0
+
+    def test_steady_chroma_stays_low(self):
+        det = TonalChangeDetector()
+        distances = []
+        for _ in range(100):
+            distances.append(det.update(self.C_MAJOR, is_silent=False))
+        # After warmup, feeding the same chroma should keep distance near 0
+        assert max(distances[20:]) < 0.05
+
+    def test_key_shift_spikes(self):
+        det = TonalChangeDetector()
+        # Establish C major as the long-term reference (>600 frames = >20s)
+        for _ in range(900):
+            det.update(self.C_MAJOR, is_silent=False)
+        # Switch to E major — give the fast EMA time to saturate on the
+        # new chroma while the slow EMA is still anchored on C major.
+        # At fast=2s/slow=20s defaults, fast saturates in ~4-5s (~150 frames).
+        peak = 0.0
+        for _ in range(200):
+            peak = max(peak, det.update(self.E_MAJOR, is_silent=False))
+        assert peak > 0.2, f"key shift should spike, got peak={peak}"
+
+    def test_returns_float_in_zero_one(self):
+        det = TonalChangeDetector()
+        for chroma in (self.C_MAJOR, self.E_MAJOR, (0.1,) * 12):
+            d = det.update(chroma, is_silent=False)
+            assert isinstance(d, float)
+            assert 0.0 <= d <= 1.0
+
+    def test_silence_does_not_update_reference(self):
+        """Silence shouldn't decay the reference EMA toward zero.
+
+        If it did, the next non-silent frame would produce a spurious spike
+        because fast EMA and zero-ish slow EMA would have large cos distance.
+        """
+        det = TonalChangeDetector()
+        # Establish a reference on C major
+        for _ in range(300):
+            det.update(self.C_MAJOR, is_silent=False)
+        # Many silent frames
+        for _ in range(200):
+            assert det.update((0.0,) * 12, is_silent=True) == 0.0
+        # First non-silent C major frame after silence — should still be low
+        d = det.update(self.C_MAJOR, is_silent=False)
+        assert d < 0.05, f"silence should not spoil reference, got d={d}"
 
 
 class TestMultiBandBeatDetector:
