@@ -1,6 +1,6 @@
 [project]
 name = "nuphy-rgb"
-version = "0.10.1"
+version = "0.11.0"
 description = "Music-reactive per-key RGB for NuPhy Air75 V2 keyboards"
 requires-python = ">=3.11"
 authors = [
