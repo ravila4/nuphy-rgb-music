@@ -14,6 +14,7 @@ from nuphy_rgb.effects.karman_street import KarmanStreet
 from nuphy_rgb.effects.lightning import Lightning
 from nuphy_rgb.effects.mycelium import Mycelium
 from nuphy_rgb.effects.navier_stokes import NavierStokes
+from nuphy_rgb.effects.pianoroll import Pianoroll
 from nuphy_rgb.effects.polarity import Polarity
 from nuphy_rgb.effects.raycaster import Raycaster
 from nuphy_rgb.effects.spectral_waterfall import SpectralWaterfall
@@ -28,6 +29,7 @@ ALL_EFFECTS = [
     SpectralWaterfall,
     Aurora,
     ChromaticKeys,
+    Pianoroll,
     NavierStokes,
     Polarity,
     KarmanStreet,

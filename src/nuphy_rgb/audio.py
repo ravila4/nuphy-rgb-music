@@ -44,6 +44,8 @@ class AudioFrame:
     spectral_flatness: float = 0.0   # 0.0 (tonal) to 1.0 (noise)
     tonal_change: float = 0.0        # 0.0 (steady) to 1.0 (new tonal center)
     timbral_change: float = 0.0      # 0.0 (steady) to 1.0 (new arrangement)
+    pitch_midi: float = 0.0          # fractional MIDI note number (0 == unvoiced)
+    voiced_prob: float = 0.0         # 0.0 (unvoiced/noise) to 1.0 (confident pitch)
 
 
 class ExpFilter:
@@ -297,6 +299,112 @@ class TimbralChangeDetector:
         return max(0.0, 1.0 - similarity)
 
 
+def hz_to_midi(freq_hz: float) -> float:
+    """Convert Hz to fractional MIDI note number. Returns 0.0 for non-positive input."""
+    if freq_hz <= 0.0:
+        return 0.0
+    return 69.0 + 12.0 * float(np.log2(freq_hz / 440.0))
+
+
+class YinPitchDetector:
+    """Monophonic pitch estimator using the YIN algorithm.
+
+    Operates on a raw audio buffer (no windowing, unlike FFT). Per-frame
+    output: (pitch_midi, voiced_prob). Returns (0.0, 0.0) on silence or
+    when no confident pitch is found.
+
+    See de Cheveigné & Kawahara (2002). This is plain YIN — no HMM.
+    Temporal smoothing is the caller's responsibility (ExpFilter on MIDI
+    works well; averaging Hz does not, because pitch perception is
+    logarithmic in frequency).
+    """
+
+    def __init__(
+        self,
+        sample_rate: int = 48000,
+        f_min: float = 80.0,      # ~E2 — covers bass and vocals
+        f_max: float = 1000.0,    # ~B5
+        threshold: float = 0.15,
+    ):
+        self._sample_rate = sample_rate
+        self._tau_min = max(2, int(sample_rate / f_max))
+        self._tau_max = int(sample_rate / f_min)
+        self._threshold = threshold
+
+    def update(self, samples: np.ndarray) -> tuple[float, float]:
+        """Estimate pitch from a buffer of raw audio samples."""
+        n = len(samples)
+        tau_max = min(self._tau_max, n // 2)
+        if tau_max <= self._tau_min:
+            return 0.0, 0.0
+
+        # Silence guard: skip the expensive diff on dead air
+        if float(np.sqrt(np.mean(samples * samples))) < SILENCE_FLOOR:
+            return 0.0, 0.0
+
+        x = samples.astype(np.float64)
+
+        # Difference function d(tau) for tau = 1..tau_max, via the
+        # autocorrelation identity:
+        #   d(tau) = sum x[j]^2 + sum x[j+tau]^2 - 2 * r(tau)
+        # We need d over the full [1, tau_max] range so that the cumulative
+        # mean normalization (YIN step 3) is accurate — restricting the
+        # cumsum to [tau_min, tau_max] inflates d' near the start and
+        # defeats the absolute threshold.
+        taus = np.arange(1, tau_max + 1)
+        sq = x * x
+        cumsq = np.concatenate(([0.0], np.cumsum(sq)))
+        sum_front = cumsq[n - taus] - cumsq[0]
+        sum_back = cumsq[n] - cumsq[taus]
+
+        r = np.empty_like(taus, dtype=np.float64)
+        for i, tau in enumerate(taus):
+            r[i] = float(np.dot(x[: n - tau], x[tau:]))
+
+        d = sum_front + sum_back - 2.0 * r
+        d = np.maximum(d, 0.0)
+
+        # Cumulative mean normalized difference: d'(tau) = d(tau) /
+        # ((1/tau) * sum_{k=1..tau} d(k)). d'(1) is 1 by convention.
+        cum = np.cumsum(d)
+        denom = cum / taus
+        d_prime = np.where(denom > 0, d / denom, 1.0)
+        d_prime[0] = 1.0
+
+        # Search only within the configured pitch range.
+        search_start = self._tau_min - 1  # index of tau = tau_min
+        window = d_prime[search_start:]
+
+        below = np.where(window < self._threshold)[0]
+        if len(below) > 0:
+            idx = int(below[0])
+            # Walk to the bottom of this dip: advance while d' keeps falling.
+            while idx + 1 < len(window) and window[idx + 1] < window[idx]:
+                idx += 1
+        else:
+            idx = int(np.argmin(window))
+            if window[idx] > 0.5:
+                return 0.0, 0.0
+
+        abs_idx = idx + search_start
+        # Parabolic interpolation for sub-sample tau accuracy.
+        if 0 < abs_idx < len(d_prime) - 1:
+            y0, y1, y2 = d_prime[abs_idx - 1], d_prime[abs_idx], d_prime[abs_idx + 1]
+            denom2 = (y0 - 2.0 * y1 + y2)
+            shift = 0.5 * (y0 - y2) / denom2 if abs(denom2) > 1e-12 else 0.0
+            tau_refined = taus[abs_idx] + shift
+        else:
+            tau_refined = float(taus[abs_idx])
+
+        if tau_refined <= 0.0:
+            return 0.0, 0.0
+
+        freq_hz = self._sample_rate / tau_refined
+        pitch_midi = hz_to_midi(freq_hz)
+        voiced_prob = float(np.clip(1.0 - d_prime[abs_idx], 0.0, 1.0))
+        return pitch_midi, voiced_prob
+
+
 class BeatDetector:
     """Energy-threshold beat detector with refractory period."""
 
@@ -382,6 +490,7 @@ class AudioCapture:
         self._flatness_filter = ExpFilter(alpha_rise=0.8, alpha_decay=0.15)
         self._tonal_detector = TonalChangeDetector()
         self._timbral_detector = TimbralChangeDetector()
+        self._pitch_detector = YinPitchDetector(sample_rate=sample_rate)
         self._stream: sd.InputStream | None = None
 
     @staticmethod
@@ -517,6 +626,12 @@ class AudioCapture:
         # Timbral change (same trick on the log-spectrum envelope)
         timbral_change = self._timbral_detector.update(spectrum, is_silent)
 
+        # Pitch tracking (YIN on the raw ring buffer)
+        if is_silent:
+            pitch_midi, voiced_prob = 0.0, 0.0
+        else:
+            pitch_midi, voiced_prob = self._pitch_detector.update(self._ring)
+
         return AudioFrame(
             bass=bass,
             mids=mids,
@@ -536,4 +651,6 @@ class AudioCapture:
             spectral_flatness=spectral_flatness,
             tonal_change=tonal_change,
             timbral_change=timbral_change,
+            pitch_midi=pitch_midi,
+            voiced_prob=voiced_prob,
         )

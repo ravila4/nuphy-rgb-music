@@ -44,7 +44,14 @@ ERR_INVALID_PARAMS = -32602
 
 
 def control_socket_path() -> Path:
-    """Return the platform-appropriate path for the control socket."""
+    """Return the platform-appropriate path for the control socket.
+
+    ``NUPHY_RGB_IPC_SOCKET`` overrides the default; useful for running
+    multiple daemons side-by-side (e.g. A/B-testing two keyboards).
+    """
+    override = os.environ.get("NUPHY_RGB_IPC_SOCKET", "").strip()
+    if override:
+        return Path(override)
     if sys.platform == "darwin":
         base = os.environ.get("TMPDIR", "/tmp")
     else:
