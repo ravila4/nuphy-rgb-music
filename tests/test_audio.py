@@ -6,6 +6,7 @@ from nuphy_rgb.audio import (
     AudioCapture,
     AudioFrame,
     BeatDetector,
+    BeatPeriodEstimator,
     ExpFilter,
     TimbralChangeDetector,
     TonalChangeDetector,
@@ -140,6 +141,84 @@ class TestBeatDetector:
         result = bd.update(10.0)
         # First frame has no meaningful average, so no beat
         assert result is False
+
+
+class TestBeatPeriodEstimator:
+    @staticmethod
+    def _feed_beats(est, beat_times, fps=30.0, start=0.0, until=None):
+        """Drive the estimator frame-by-frame from *start*, beats at the
+        given absolute times. Returns the estimate after the last frame.
+        """
+        end = until if until is not None else max(beat_times) + 0.01
+        period = 0.0
+        beats = sorted(beat_times)
+        next_beat = 0
+        n_frames = int((end - start) * fps) + 1
+        for i in range(n_frames):
+            t = start + i / fps
+            is_beat = next_beat < len(beats) and t >= beats[next_beat]
+            if is_beat:
+                next_beat += 1
+            period = est.update(is_beat, t)
+        return period
+
+    def test_cold_start_returns_zero(self):
+        est = BeatPeriodEstimator()
+        assert est.update(False, 0.0) == 0.0
+        assert est.update(True, 0.5) == 0.0
+        assert est.update(True, 1.0) == 0.0
+
+    def test_steady_beats_yield_period(self):
+        est = BeatPeriodEstimator()
+        beats = [0.5 * i for i in range(8)]
+        period = self._feed_beats(est, beats)
+        assert period == pytest.approx(0.5, abs=0.02)
+
+    def test_tempo_change_adapts(self):
+        est = BeatPeriodEstimator()
+        # 0.6 s beats, then a sustained switch to 0.4 s beats
+        slow = [0.6 * i for i in range(8)]
+        fast = [slow[-1] + 0.4 * (i + 1) for i in range(10)]
+        period = self._feed_beats(est, slow + fast)
+        assert period == pytest.approx(0.4, abs=0.03)
+
+    def test_missed_beat_does_not_corrupt_median(self):
+        est = BeatPeriodEstimator()
+        # One beat dropped: a single 1.0 s gap among 0.5 s intervals
+        beats = [0.0, 0.5, 1.0, 2.0, 2.5, 3.0, 3.5, 4.0]
+        period = self._feed_beats(est, beats)
+        assert period == pytest.approx(0.5, abs=0.02)
+
+    def test_jittery_intervals_yield_zero(self):
+        est = BeatPeriodEstimator()
+        # Wildly inconsistent spacing -- no stable tempo to report
+        beats = [0.0, 0.3, 1.2, 1.5, 2.9, 3.2, 4.8, 5.1]
+        period = self._feed_beats(est, beats)
+        assert period == 0.0
+
+    def test_implausible_intervals_ignored(self):
+        est = BeatPeriodEstimator()
+        # Sub-0.25s spacing (>240 BPM) is noise, not tempo
+        beats = [0.1 * i for i in range(12)]
+        period = self._feed_beats(est, beats)
+        assert period == 0.0
+
+    def test_long_gap_resets_to_zero(self):
+        est = BeatPeriodEstimator()
+        beats = [0.5 * i for i in range(8)]
+        period = self._feed_beats(est, beats)
+        assert period == pytest.approx(0.5, abs=0.02)
+        # Breakdown: 5 s of no beats
+        period = self._feed_beats(est, [], start=4.0, until=9.0)
+        assert period == 0.0
+
+    def test_recovers_after_reset(self):
+        est = BeatPeriodEstimator()
+        self._feed_beats(est, [0.5 * i for i in range(8)])
+        self._feed_beats(est, [], start=4.0, until=9.0)
+        beats = [9.1 + 0.4 * i for i in range(8)]
+        period = self._feed_beats(est, beats, start=9.1)
+        assert period == pytest.approx(0.4, abs=0.02)
 
 
 class TestExpFilter:

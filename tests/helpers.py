@@ -16,6 +16,7 @@ def make_frame(**kwargs) -> AudioFrame:
         timbral_change=0.0,
         pitch_midi=0.0,
         voiced_prob=0.0,
+        beat_period=0.0,
     )
     defaults.update(kwargs)
     # raw_rms (pre-AGC) defaults to rms for convenience in tests.

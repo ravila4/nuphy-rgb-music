@@ -13,7 +13,6 @@ overrides.
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import importlib.util
 import queue
 import sys
@@ -122,9 +121,9 @@ def load_audio(path: Path, start: float, duration: float) -> np.ndarray:
 def run_pipeline(samples: np.ndarray) -> list[AudioFrame]:
     """Feed a sample array through AudioCapture and return AudioFrames.
 
-    Each frame's timestamp is rewritten to audio-position time (not
-    monotonic) so effects with time-driven oscillations advance correctly
-    in this tight offline loop.
+    Frames are timestamped with audio-position time (not monotonic) so
+    effects with time-driven oscillations and interval-based analysis
+    (beat period) advance correctly in this tight offline loop.
     """
     q: queue.SimpleQueue[np.ndarray] = queue.SimpleQueue()
     capture = AudioCapture(external_queue=q)
@@ -138,11 +137,9 @@ def run_pipeline(samples: np.ndarray) -> list[AudioFrame]:
     for i in range(n_chunks):
         chunk = samples[i * hop : (i + 1) * hop]
         q.put_nowait(chunk)
-        frame = capture.process_latest()
-        if frame is None:
-            continue
-        frame = dataclasses.replace(frame, timestamp=i * dt)
-        frames.append(frame)
+        frame = capture.process_latest(timestamp=i * dt)
+        if frame is not None:
+            frames.append(frame)
 
     capture.stop()
     return frames

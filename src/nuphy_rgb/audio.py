@@ -46,6 +46,7 @@ class AudioFrame:
     timbral_change: float = 0.0      # 0.0 (steady) to 1.0 (new arrangement)
     pitch_midi: float = 0.0          # fractional MIDI note number (0 == unvoiced)
     voiced_prob: float = 0.0         # 0.0 (unvoiced/noise) to 1.0 (confident pitch)
+    beat_period: float = 0.0         # seconds between beats (0 == no stable tempo)
 
 
 class ExpFilter:
@@ -441,6 +442,56 @@ class BeatDetector:
         return is_beat
 
 
+class BeatPeriodEstimator:
+    """Tracks the beat period (seconds) from a stream of beat flags.
+
+    Median of recent inter-beat intervals, reported only while the tempo is
+    stable: at least MIN_INTERVALS plausible intervals (30-240 BPM) of which
+    a clear majority agree with the median. Returns 0.0 on cold start, on
+    jittery/implausible spacing, and after a long beatless gap (breakdowns,
+    silence) so consumers can fall back to their own clock.
+    """
+
+    MIN_INTERVAL = 0.25  # seconds; 240 BPM
+    MAX_INTERVAL = 2.0   # seconds; 30 BPM
+    MIN_INTERVALS = 3
+    AGREE_TOLERANCE = 0.15  # fraction of the median
+    AGREE_FRACTION = 0.7
+    STALE_FLOOR = 3.0  # seconds without a beat before reset
+
+    def __init__(self, history_len: int = 8):
+        self._beat_times: deque[float] = deque(maxlen=history_len)
+        self._period = 0.0
+
+    def update(self, is_beat: bool, timestamp: float) -> float:
+        """Feed one frame. Returns the current period estimate (0.0 = none)."""
+        if self._beat_times:
+            stale_after = max(self.STALE_FLOOR, 4.0 * self._period)
+            if timestamp - self._beat_times[-1] > stale_after:
+                self._beat_times.clear()
+                self._period = 0.0
+        if is_beat:
+            self._beat_times.append(timestamp)
+            self._period = self._estimate()
+        return self._period
+
+    def _estimate(self) -> float:
+        times = list(self._beat_times)
+        intervals = [b - a for a, b in zip(times, times[1:])]
+        plausible = [
+            iv for iv in intervals if self.MIN_INTERVAL <= iv <= self.MAX_INTERVAL
+        ]
+        if len(plausible) < self.MIN_INTERVALS:
+            return 0.0
+        median = float(np.median(plausible))
+        agreeing = [
+            iv for iv in plausible if abs(iv - median) <= self.AGREE_TOLERANCE * median
+        ]
+        if len(agreeing) < self.AGREE_FRACTION * len(plausible):
+            return 0.0
+        return median
+
+
 SAMPLE_RATE = 48000
 BLOCK_SIZE = 1024
 FFT_SIZE = 2048
@@ -471,6 +522,7 @@ class AudioCapture:
         self._beat_detector = BeatDetector()
         self._mid_beat_detector = BeatDetector()
         self._high_beat_detector = BeatDetector()
+        self._beat_period_estimator = BeatPeriodEstimator()
         self._prev_magnitudes: np.ndarray | None = None
         self._prev_rms: float = 0.0
         self._peak_flux: float = 0.0
@@ -528,12 +580,16 @@ class AudioCapture:
             self._stream.close()
             self._stream = None
 
-    def process_latest(self) -> AudioFrame | None:
+    def process_latest(self, timestamp: float | None = None) -> AudioFrame | None:
         """Drain the queue and process the latest chunk.
 
         Only the most recent audio chunk is rolled into the ring buffer.
         Intermediate chunks are intentionally discarded to minimize latency --
         we always want the freshest audio, not a complete history.
+
+        *timestamp* defaults to ``time.monotonic()``; offline pipelines pass
+        audio-position time instead so interval-based analysis (beat period)
+        measures song time, not wall-clock time.
         """
         chunk = None
         try:
@@ -575,6 +631,9 @@ class AudioCapture:
         is_beat = self._beat_detector.update(raw_bass)
         mid_beat = self._mid_beat_detector.update(raw_mids)
         high_beat = self._high_beat_detector.update(raw_highs)
+        if timestamp is None:
+            timestamp = time.monotonic()
+        beat_period = self._beat_period_estimator.update(is_beat, timestamp)
 
         # Spectral flux (AGC-normalized like band energies)
         if self._prev_magnitudes is not None:
@@ -640,7 +699,7 @@ class AudioCapture:
             rms=rms,
             raw_rms=raw_rms,
             is_beat=is_beat,
-            timestamp=time.monotonic(),
+            timestamp=timestamp,
             onset_strength=onset_strength,
             spectral_flux=spectral_flux,
             mid_beat=mid_beat,
@@ -653,4 +712,5 @@ class AudioCapture:
             timbral_change=timbral_change,
             pitch_midi=pitch_midi,
             voiced_prob=voiced_prob,
+            beat_period=beat_period,
         )
