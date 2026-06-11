@@ -9,6 +9,7 @@ from nuphy_rgb.effects.chromatic_keys import ChromaticKeys
 from nuphy_rgb.effects.conways_jukebox import ConwaysJukebox
 from nuphy_rgb.effects.double_pendulum import DoublePendulum
 from nuphy_rgb.effects.event_horizon import EventHorizon
+from nuphy_rgb.effects.fireflies import Fireflies
 from nuphy_rgb.effects.interference_pond import InterferencePond
 from nuphy_rgb.effects.karman_street import KarmanStreet
 from nuphy_rgb.effects.lightning import Lightning
@@ -36,6 +37,7 @@ ALL_EFFECTS = [
     DoublePendulum,
     ThreeBody,
     ConwaysJukebox,
+    Fireflies,
     Lightning,
     Raycaster,
     Blackout,

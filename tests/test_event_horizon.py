@@ -74,34 +74,62 @@ class TestSilence:
         assert abs(rotation_after - rotation_before) < 1e-3
 
 
-class TestCollapse:
-    def test_beat_sets_collapse_intensity(self):
-        viz = EventHorizon()
-        assert viz._collapse_intensity == 0.0
-        viz.render(make_frame(is_beat=True))
-        assert viz._collapse_intensity > 0.8
+class TestFlare:
+    def test_swallow_adds_flare(self):
+        """A ring crossing the photon ring dumps its intensity into the flare."""
+        from nuphy_rgb.effects.event_horizon.effect import _InfallRing
 
-    def test_collapse_fades_over_frames(self):
         viz = EventHorizon()
-        viz.render(make_frame(is_beat=True))
-        first = viz._collapse_intensity
-        for _ in range(5):
-            viz.render(make_frame())
-        assert viz._collapse_intensity < first
+        viz.render(make_frame())
+        viz._infall_rings.append(
+            _InfallRing(radius=1.0, intensity=0.8, spawn_radius=4.0)
+        )
+        viz.render(make_frame())
+        assert len(viz._infall_rings) == 0, "ring should have been swallowed"
+        assert viz._flare > 0.3
 
-    def test_collapse_eventually_ends(self):
+    def test_fadeout_does_not_flare(self):
+        """Rings culled for low intensity (not swallowed) must not flash."""
+        from nuphy_rgb.effects.event_horizon.effect import _InfallRing
+
         viz = EventHorizon()
-        viz.render(make_frame(is_beat=True))
-        for _ in range(30):
-            viz.render(make_frame())
-        assert viz._collapse_intensity < 0.01
+        viz.render(make_frame())
+        viz._infall_rings.append(
+            _InfallRing(radius=3.5, intensity=0.01, spawn_radius=4.0)
+        )
+        viz.render(make_frame())
+        assert len(viz._infall_rings) == 0, "weak ring should have been culled"
+        assert viz._flare == 0.0
 
-    def test_onset_strength_scales_collapse(self):
-        viz_low = EventHorizon()
-        viz_high = EventHorizon()
-        viz_low.render(make_frame(is_beat=True, onset_strength=0.0))
-        viz_high.render(make_frame(is_beat=True, onset_strength=1.0))
-        assert viz_high._collapse_intensity > viz_low._collapse_intensity
+    def test_flare_decays(self):
+        """Flare decay is framerate-independent, so simulated time must advance."""
+        viz = EventHorizon()
+        viz.render(make_frame(timestamp=0.0))
+        viz._flare = 1.0
+        for i in range(30):
+            viz.render(make_frame(timestamp=(i + 1) * 0.033))
+        assert viz._flare < 0.05
+
+    def test_beat_does_not_flash_immediately(self):
+        """The flash happens at swallow time, ~1s after the beat — not on it."""
+        viz = EventHorizon()
+        viz.render(make_frame(is_beat=True, bass=0.6, onset_strength=1.0))
+        assert viz._flare == 0.0
+        assert not hasattr(viz, "_collapse_intensity")
+
+    def test_flare_brightens_photon_ring(self):
+        viz_flare = EventHorizon()
+        viz_base = EventHorizon()
+        warm = make_frame(rms=0.5, raw_rms=0.3)
+        for _ in range(20):
+            viz_flare.render(warm)
+            viz_base.render(warm)
+        viz_flare._flare = 1.0
+        out_flare = viz_flare.render(warm)
+        out_base = viz_base.render(warm)
+        lum_flare = sum(sum(c) for c in out_flare)
+        lum_base = sum(sum(c) for c in out_base)
+        assert lum_flare > lum_base + NUM_LEDS * 3 * 255 * 0.01
 
 
 class TestInfallRings:
@@ -142,6 +170,150 @@ class TestInfallRings:
         for _ in range(20):
             viz.render(make_frame(is_beat=True, bass=0.8))
         assert len(viz._infall_rings) <= 6
+
+
+class TestWarmthVisibility:
+    def test_warm_envelope_full_strength_inside(self):
+        import numpy as np
+
+        from nuphy_rgb.effects.event_horizon.effect import _warm_envelope
+
+        env = _warm_envelope(np.array([0.0, 2.0, 4.0]), disk_extent=5.0)
+        assert np.allclose(env, 1.0)
+
+    def test_warm_envelope_zero_outside(self):
+        import numpy as np
+
+        from nuphy_rgb.effects.event_horizon.effect import _warm_envelope
+
+        env = _warm_envelope(np.array([5.0, 6.5]), disk_extent=5.0)
+        assert np.allclose(env, 0.0)
+
+    def test_warm_envelope_fades_at_rim(self):
+        import numpy as np
+
+        from nuphy_rgb.effects.event_horizon.effect import _warm_envelope
+
+        env = _warm_envelope(np.array([4.7]), disk_extent=5.0)
+        assert 0.0 < env[0] < 1.0
+
+    def test_fresh_ring_visible_at_spawn_radius(self):
+        """A just-spawned infall ring must light its LEDs immediately.
+
+        Regression: warmth used to be masked by the exponential disk
+        envelope, leaving rings invisible for the outer third of their
+        journey (diag baseline 2026-06-11).
+        """
+        viz_beat = EventHorizon()
+        viz_base = EventHorizon()
+        for i in range(30):
+            f = make_frame(rms=0.8, raw_rms=0.4, bass=0.3, timestamp=i / 30)
+            viz_beat.render(f)
+            viz_base.render(f)
+
+        beat = viz_beat.render(make_frame(
+            rms=0.8, raw_rms=0.4, bass=0.6, onset_strength=0.8,
+            is_beat=True, timestamp=31 / 30,
+        ))
+        base = viz_base.render(make_frame(
+            rms=0.8, raw_rms=0.4, bass=0.6, onset_strength=0.8,
+            is_beat=False, timestamp=31 / 30,
+        ))
+        assert viz_beat._infall_rings, "beat should have spawned a ring"
+        spawn_radius = viz_beat._infall_rings[-1].radius
+
+        from nuphy_rgb.plugin_api import MAX_COLS, NUM_ROWS, LED_X, LED_Y
+
+        key_x = LED_X * (MAX_COLS - 1)
+        key_y = LED_Y * (NUM_ROWS - 1)
+        sx, sy = viz_beat._sx_filter.value, viz_beat._sy_filter.value
+
+        deltas: list[float] = []
+        for i in range(NUM_LEDS):
+            dist = math.hypot(key_x[i] - sx, key_y[i] - sy)
+            if abs(dist - spawn_radius) < 0.5:
+                lum_beat = sum(beat[i]) / (3 * 255)
+                lum_base = sum(base[i]) / (3 * 255)
+                deltas.append(lum_beat - lum_base)
+
+        assert deltas, "no LEDs found near the spawn radius"
+        avg_delta = sum(deltas) / len(deltas)
+        # Calibration (2026-06-11): envelope-masked (broken) measures 0.026,
+        # decoupled (fixed) measures 0.079. Threshold sits between with margin.
+        assert avg_delta > 0.05, (
+            f"freshly spawned ring should brighten its LEDs, delta={avg_delta:.3f}"
+        )
+
+
+class TestInfallDynamics:
+    def test_velocity_constant_when_accel_zero(self):
+        from nuphy_rgb.effects.event_horizon.effect import _infall_velocity
+
+        v_far = _infall_velocity(4.0, spawn_radius=4.5, base_speed=0.05, accel=0.0)
+        v_near = _infall_velocity(1.5, spawn_radius=4.5, base_speed=0.05, accel=0.0)
+        assert v_far == v_near == 0.05
+
+    def test_velocity_equals_base_at_spawn(self):
+        from nuphy_rgb.effects.event_horizon.effect import _infall_velocity
+
+        v = _infall_velocity(4.5, spawn_radius=4.5, base_speed=0.05, accel=0.5)
+        assert abs(v - 0.05) < 1e-9
+
+    def test_velocity_increases_inward(self):
+        from nuphy_rgb.effects.event_horizon.effect import _infall_velocity
+
+        v_far = _infall_velocity(4.0, spawn_radius=4.5, base_speed=0.05, accel=0.5)
+        v_near = _infall_velocity(1.5, spawn_radius=4.5, base_speed=0.05, accel=0.5)
+        assert v_near > v_far
+
+    def test_tidal_width_shrinks_inward(self):
+        from nuphy_rgb.effects.event_horizon.effect import _tidal_profile
+
+        w_spawn, _ = _tidal_profile(4.5, spawn_radius=4.5, base_width=0.9, tidal_min=0.35)
+        w_near, _ = _tidal_profile(2.0, spawn_radius=4.5, base_width=0.9, tidal_min=0.35)
+        assert abs(w_spawn - 0.9) < 1e-9
+        assert w_near < w_spawn
+
+    def test_tidal_width_has_floor(self):
+        from nuphy_rgb.effects.event_horizon.effect import _tidal_profile
+
+        w, _ = _tidal_profile(0.5, spawn_radius=4.5, base_width=0.9, tidal_min=0.35)
+        assert abs(w - 0.9 * 0.35) < 1e-9
+
+    def test_tidal_flux_conserved(self):
+        """Peak boost compensates thinning: width * boost == base width."""
+        from nuphy_rgb.effects.event_horizon.effect import _tidal_profile
+
+        for radius in (4.5, 3.0, 2.0):
+            w, boost = _tidal_profile(radius, spawn_radius=4.5, base_width=0.9, tidal_min=0.35)
+            assert abs(w * boost - 0.9) < 1e-9
+
+    def test_infall_accelerates_toward_horizon(self):
+        """Per-frame radius deltas must grow as a ring falls inward."""
+        viz = EventHorizon()
+        viz.render(make_frame(is_beat=True, bass=0.6, timestamp=0.0))
+        assert viz._infall_rings
+        radii = [viz._infall_rings[0].radius]
+        for i in range(12):
+            viz.render(make_frame(bass=0.0, timestamp=(i + 1) * 0.033))
+            if not viz._infall_rings:
+                break
+            radii.append(viz._infall_rings[0].radius)
+        deltas = [a - b for a, b in zip(radii, radii[1:])]
+        assert len(deltas) >= 6, "ring swallowed too quickly to observe"
+        assert all(d2 > d1 for d1, d2 in zip(deltas, deltas[1:])), (
+            f"infall speed should increase monotonically, deltas={deltas}"
+        )
+
+    def test_ring_intensity_persists_during_infall(self):
+        """No per-frame decay: a falling ring keeps its spawn intensity."""
+        viz = EventHorizon()
+        viz.render(make_frame(is_beat=True, bass=0.6, timestamp=0.0))
+        spawn_intensity = viz._infall_rings[0].intensity
+        for i in range(5):
+            viz.render(make_frame(bass=0.0, timestamp=(i + 1) * 0.033))
+        assert viz._infall_rings, "ring should still be falling after 5 frames"
+        assert viz._infall_rings[0].intensity == spawn_intensity
 
 
 class TestRingStructure:
@@ -209,6 +381,40 @@ class TestRingStructure:
             viz_quiet.render(make_frame(rms=0.0, raw_rms=0.0))
             viz_loud.render(make_frame(rms=0.9, raw_rms=0.6))
         assert viz_loud._breath_energy.value > viz_quiet._breath_energy.value + 0.3
+
+
+class TestBeaming:
+    def test_uniform_when_no_spin(self):
+        import numpy as np
+
+        from nuphy_rgb.effects.event_horizon.effect import _beaming_field
+
+        theta = np.linspace(-math.pi, math.pi, 16)
+        field = _beaming_field(theta, rotation=1.3, spin=0.0, strength=0.7)
+        assert np.allclose(field, 1.0)
+
+    def test_bounds_at_full_spin(self):
+        import numpy as np
+
+        from nuphy_rgb.effects.event_horizon.effect import _beaming_field
+
+        theta = np.linspace(-math.pi, math.pi, 64)
+        field = _beaming_field(theta, rotation=0.0, spin=1.0, strength=0.7)
+        assert field.min() >= 0.3 - 1e-9
+        assert field.max() <= 1.7 + 1e-9
+        assert field.min() > 0.0
+
+    def test_approaching_side_brighter(self):
+        import numpy as np
+
+        from nuphy_rgb.effects.event_horizon.effect import _beaming_field
+
+        rotation = 0.7
+        bright = _beaming_field(np.array([rotation]), rotation, spin=1.0, strength=0.5)
+        dim = _beaming_field(
+            np.array([rotation + math.pi]), rotation, spin=1.0, strength=0.5
+        )
+        assert bright[0] > dim[0]
 
 
 class TestDeterminism:

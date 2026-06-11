@@ -1,9 +1,11 @@
 # Event Horizon
 
 A wandering dark rectangle surrounded by a glowing ring with spiral arms.
-Bass beats spawn color waves at the outer edge that fall inward and get
-swallowed when they reach the ring. Loudness inflates the whole structure;
-silence collapses it into a tight halo.
+Bass beats spawn color waves at the outer edge that accelerate inward,
+thinning and brightening, until they cross the ring and detonate into a
+flare. Loudness inflates the whole structure; silence collapses it into a
+tight halo. While the disk spins, the approaching side glows brighter
+(Doppler beaming).
 
 ## Inspiration
 
@@ -55,6 +57,20 @@ default) keeps them readable at 6x16 resolution.
 
 Rotation is gated by audio energy and coasts to a halt over ~1s in silence.
 
+## Doppler beaming
+
+Ring and arm brightness are multiplied by
+
+```text
+1 + beam_strength * spin * cos(theta - rotation)
+```
+
+so the side of the disk rotating toward the viewer glows brighter (the M87
+look). The asymmetry is gated by the spin-energy filter: silence gives a
+symmetric halo. `beam_strength` is capped at 0.7 so the receding side dims
+but never disappears. This also makes rotation legible at 6x16 -- a bright
+spot orbiting the void reads far better than rigid arms alone.
+
 ## Breathing
 
 `raw_rms` through a slow ExpFilter (rise=0.15, decay=0.03) scales both
@@ -64,17 +80,33 @@ the void.
 
 ## Infall rings
 
-Bass beats spawn a color ring at the outer disk edge. Each frame, live
+Bass beats spawn a color ring at the warm envelope's full-strength edge
+(`disk_extent - 0.8`, never inside the photon ring). Each frame, live
 rings:
 
-1. Move inward at `infall_speed * (1 + bass * 0.8)`
-2. Decay in intensity (0.97 per frame)
-3. Get removed when they cross below `ring_radius`
+1. Accelerate inward: `infall_speed * (spawn_r / r) ** infall_accel`,
+   times `(1 + bass * 0.8)`. The default `infall_accel = 0.5` is the
+   Keplerian free-fall exponent; 0 recovers constant speed.
+2. Thin tidally: effective width shrinks proportionally to radius
+   (floored at `tidal_min`), while peak intensity rises `1/frac` to
+   conserve flux. Rings arrive at the horizon thin and hot.
+3. Get swallowed when they cross below `ring_radius`, dumping their
+   remaining intensity into the accretion flare.
 
-Each ring's contribution to a given LED is a radial Gaussian, masked by
-the disk envelope. The sum of all ring contributions produces a "warmth"
-field that shifts hue from indigo toward red through magenta. Max 6
-concurrent rings.
+There is no per-frame intensity decay -- the tidal profile provides the
+brightness arc instead. Each ring's contribution to a given LED is a
+radial Gaussian, masked by a smoothstep that only fades at the disk rim
+(full strength inside, so rings are visible from the moment they spawn --
+the old exponential-envelope mask hid them for the outer third of the
+journey). Max 6 concurrent rings.
+
+## Accretion flare
+
+A swallowed ring flashes the photon ring (luminance only, scaled by
+`flare_gain`, decaying at 0.8/frame). Every flare is therefore a bass
+beat arriving ~1 second late, after the eye has watched it fall. Rings
+culled for low intensity fade silently -- only swallows flare. The old
+beat-synced collapse pulse was removed in favor of this delayed payoff.
 
 ## Coloring
 
@@ -99,12 +131,12 @@ dominant frequency.
 
 | Feature          | Effect                                        |
 |------------------|-----------------------------------------------|
-| `raw_rms`        | Disk size (breathing) + rotation gate         |
+| `raw_rms`        | Disk size (breathing) + rotation gate + beaming gate |
 | `rms`            | Global brightness floor                       |
 | `mids`           | Void drift speed                              |
-| `bass`           | Ring spawns + infall speed + rotation boost   |
-| `is_beat`        | Ring spawn trigger + brightness pulse         |
-| `onset_strength` | Ring intensity + pulse intensity              |
+| `bass`           | Ring spawns + infall pull + rotation boost    |
+| `is_beat`        | Ring spawn trigger (flare follows at swallow) |
+| `onset_strength` | Ring intensity (and thus eventual flare size) |
 
 ## Parameters
 
@@ -121,7 +153,11 @@ dominant frequency.
 | `num_arms`        | 3       | 2 - 5      |
 | `arm_sharpness`   | 8.0     | 2.0 - 16.0 |
 | `spiral_pitch`    | 0.6     | 0.0 - 1.5  |
-| `infall_speed`    | 0.08    | 0.02 - 0.25|
+| `infall_speed`    | 0.05    | 0.02 - 0.25|
+| `infall_accel`    | 0.5     | 0.0 - 1.0  |
+| `tidal_min`       | 0.35    | 0.2 - 0.8  |
 | `warmth_width`    | 0.9     | 0.3 - 2.0  |
 | `warmth_gain`     | 1.2     | 0.0 - 2.5  |
+| `flare_gain`      | 1.0     | 0.0 - 2.0  |
+| `beam_strength`   | 0.45    | 0.0 - 0.7  |
 | `brightness_gain` | 1.0     | 0.4 - 2.5  |
