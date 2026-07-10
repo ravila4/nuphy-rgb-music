@@ -10,6 +10,7 @@ from nuphy_rgb.effects.chromatic_keys import ChromaticKeys
 from nuphy_rgb.effects.conways_jukebox import ConwaysJukebox
 from nuphy_rgb.effects.double_pendulum import DoublePendulum
 from nuphy_rgb.effects.event_horizon import EventHorizon
+from nuphy_rgb.effects.excitable_media import ExcitableMedia
 from nuphy_rgb.effects.fireflies import Fireflies
 from nuphy_rgb.effects.interference_pond import InterferencePond
 from nuphy_rgb.effects.karman_street import KarmanStreet
@@ -40,6 +41,7 @@ ALL_EFFECTS = [
     ConwaysJukebox,
     Fireflies,
     Avalanche,
+    ExcitableMedia,
     Lightning,
     Raycaster,
     Blackout,
