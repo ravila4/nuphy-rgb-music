@@ -4,6 +4,7 @@ Import all effect classes here. main.py uses ALL_EFFECTS to build the visualizer
 """
 
 from nuphy_rgb.effects.aurora import Aurora
+from nuphy_rgb.effects.avalanche import Avalanche
 from nuphy_rgb.effects.blackout import Blackout
 from nuphy_rgb.effects.chromatic_keys import ChromaticKeys
 from nuphy_rgb.effects.conways_jukebox import ConwaysJukebox
@@ -38,6 +39,7 @@ ALL_EFFECTS = [
     ThreeBody,
     ConwaysJukebox,
     Fireflies,
+    Avalanche,
     Lightning,
     Raycaster,
     Blackout,
